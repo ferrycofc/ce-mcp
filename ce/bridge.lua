@@ -2,6 +2,7 @@
 if CE_MCP_BRIDGE then return end
 local json = require('json')
 local MAX_FRAME = 1024 * 1024
+local tools = dofile([[E:\workspace\ce-mcp\ce\tools.lua]])
 local function integer(v) return type(v) == 'number' and v == math.floor(v) end
 local function status()
   local pid = getOpenedProcessID()
@@ -11,10 +12,12 @@ end
 local function dispatch(req)
   assert(type(req) == 'table' and type(req.method) == 'string', 'Invalid request')
   local p = req.params or {}
+  local handled, result = tools.dispatch(req.method,p)
+  if handled then return result end
   if req.method == 'ce_status' then return status() end
   if req.method == 'list_processes' then
     assert(p.filter == nil or type(p.filter) == 'string', 'filter must be a string')
-    local result = {}
+    local result = setmetatable({}, {isArray=true})
     for pid, name in pairs(getProcesslist()) do
       if not p.filter or name:lower():find(p.filter:lower(), 1, true) then
         result[#result+1] = {pid = pid, name = name}
@@ -37,7 +40,10 @@ local function dispatch(req)
       end
     end
     assert(integer(pid) and pid > 0 and processes[pid], 'Process not found')
-    openProcess(pid)
+    if getOpenedProcessID() ~= pid then
+      tools.before_attach()
+      openProcess(pid)
+    end
     assert(getOpenedProcessID() == pid, 'Failed to attach')
     return status()
   end
@@ -71,6 +77,13 @@ local function serve(pipe)
       local result
       if ok then
         ok, result = synchronize(function() return pcall(dispatch, req) end)
+        if ok and type(result)=='table' and result.__scan then
+          -- Waiting on the pipe worker leaves the CE main thread available.
+          local waited, done = pcall(function() return result.__scan.waitTillDone(120000) end)
+          ok, result = synchronize(function()
+            return pcall(tools.finish_scan, waited and done~=false, waited and 'Scan timed out' or tostring(done))
+          end)
+        end
       else result = req end
       local response = json.encode(ok and {ok=true, result=result} or {ok=false, error=tostring(result)})
       if pipe.writeDword(#response) ~= 4 then break end

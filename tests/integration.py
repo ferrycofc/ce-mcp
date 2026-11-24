@@ -67,7 +67,7 @@ async def mcp_tests(target):
         async with ClientSession(*streams) as client:
             await client.initialize()
             tools = await client.list_tools()
-            assert {t.name for t in tools.tools} == {'ce_status','list_processes','attach','read_memory'}
+            assert {t.name for t in tools.tools} >= {'ce_status','list_processes','attach','read_memory'}
             for name, arguments in [
                 ('ce_status', {}), ('list_processes', {'filter':'tutorial'}),
                 ('attach', {'pid':target['pid']}),

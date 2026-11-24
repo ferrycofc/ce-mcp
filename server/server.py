@@ -2,6 +2,7 @@
 import json
 import struct
 import time
+from typing import Literal
 
 import pywintypes
 import win32con
@@ -52,7 +53,7 @@ def request(method, **params):
     payload = json.dumps({"method": method, "params": params}, ensure_ascii=False).encode("utf-8")
     if len(payload) > MAX_FRAME:
         raise ValueError("Request too large")
-    deadline = time.monotonic() + TIMEOUT
+    deadline = time.monotonic() + (150.0 if method in {"scan_first", "scan_next"} else TIMEOUT)
     try:
         while True:
             try:
@@ -113,6 +114,94 @@ def read_memory(address: str, size: int) -> dict:
     if not 1 <= size <= 65536:
         raise ToolError("size must be 1..65536")
     return request("read_memory", address=address, size=size)
+
+
+ValueType = Literal['byte', '2bytes', '4bytes', '8bytes', 'float', 'double', 'string']
+FirstScanType = Literal['exact', 'bigger', 'smaller', 'between', 'unknown']
+NextScanType = Literal['exact', 'bigger', 'smaller', 'between', 'increased',
+    'decreased', 'changed', 'unchanged', 'increased_by', 'decreased_by']
+
+
+@mcp.tool()
+def scan_first(value_type: ValueType, scan_type: FirstScanType,
+               value: str | None = None, value2: str | None = None,
+               start_address: str = '0', stop_address: str | None = None) -> dict:
+    """Replace the CE-owned scan. Decimal values are strings; float exact uses CE rtRounded.
+
+    between uses value and value2; unknown takes no value. Strings support exact UTF-8 only.
+    Optional address bounds use CE's scan range rules. Returns total and first 20 results.
+    """
+    params = dict(value_type=value_type, scan_type=scan_type, start_address=start_address)
+    for key, item in [('value',value), ('value2',value2), ('stop_address',stop_address)]:
+        if item is not None:
+            params[key] = item
+    return request('scan_first', **params)
+
+
+@mcp.tool()
+def scan_next(scan_type: NextScanType, value: str | None = None,
+              value2: str | None = None) -> dict:
+    """Filter the previous CE scan, retaining its value type. Compare changes with previous scan.
+
+    increased_by/decreased_by take a decimal delta. unknown is valid only for scan_first.
+    Returns total and first 20 addresses/current values.
+    """
+    params = dict(scan_type=scan_type)
+    if value is not None:
+        params['value'] = value
+    if value2 is not None:
+        params['value2'] = value2
+    return request('scan_next', **params)
+
+
+@mcp.tool()
+def scan_results(start: int = 0, count: int = 20) -> dict:
+    """Page through current CE results, using a zero-based start and count 1..200."""
+    return request('scan_results', start=start, count=count)
+
+
+@mcp.tool()
+def read_value(address: str, value_type: ValueType, length: int = 256) -> dict:
+    """Read a typed value as a string to preserve integer precision. Integers display unsigned.
+
+    string reads NUL-terminated UTF-8 up to length bytes (1..4096).
+    """
+    return request('read_value', address=address, value_type=value_type, length=length)
+
+
+@mcp.tool()
+def write_value(address: str, value_type: ValueType, value: str) -> dict:
+    """Write a typed decimal value (pass as string); return its actual value read back.
+
+    Integers accept unsigned or signed two's-complement ranges. Strings write UTF-8 plus NUL,
+    up to 4096 bytes; the caller must ensure the destination buffer is large enough.
+    """
+    return request('write_value', address=address, value_type=value_type, value=value)
+
+
+@mcp.tool()
+def add_to_table(address: str, value_type: ValueType, description: str = '',
+                 frozen: bool = False, frozen_value: str | None = None,
+                 length: int = 256) -> dict:
+    """Add an address to CE's visible address table and return its stable record ID.
+
+    frozen=true locks frozen_value, or the current value if omitted. length sets string bytes.
+    An MCP attachment change unfreezes bridge records while preserving them in CE's table.
+    """
+    params = dict(address=address,value_type=value_type,description=description,
+                  frozen=frozen,length=length)
+    if frozen_value is not None:
+        params['frozen_value'] = frozen_value
+    return request('add_to_table', **params)
+
+
+@mcp.tool()
+def set_frozen(id: int, frozen: bool, value: str | None = None) -> dict:
+    """Toggle freezing of a bridge-created memory record by ID, optionally setting a new value."""
+    params = dict(id=id,frozen=frozen)
+    if value is not None:
+        params['value'] = value
+    return request('set_frozen', **params)
 
 
 if __name__ == "__main__":
