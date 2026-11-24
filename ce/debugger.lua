@@ -2,6 +2,30 @@
 local M = {}
 local active, patches = nil, {}
 local retired={}
+local debugger_pid,debugger_handle
+local function detach_debugger()
+  -- celua.txt: the started flag does not identify the debugged process.
+  if debug_isDebugging() then detachIfPossible() end
+  assert(not debug_isDebugging(), 'Cannot detach the previous debugger')
+  debugger_pid,debugger_handle=nil,nil
+  retired={} -- Retired breakpoint descriptors belong to the old debugger instance.
+end
+local function ensure_debugger(pid)
+  local handle=getOpenedProcessHandle()
+  if debug_isDebugging() and
+      (debugger_pid~=pid or debugger_handle~=handle) then
+    -- Also covers a debugger started outside this module: its owner is unknown.
+    detach_debugger()
+  end
+  assert(getProcesslist()[pid], 'Opened process has exited')
+  if not debug_isDebugging() then
+    debugger_pid,debugger_handle=nil,nil
+    retired={}
+    debugProcess(1)
+    assert(debug_isDebugging(), 'Cannot start the debugger')
+    debugger_pid,debugger_handle=pid,handle
+  end
+end
 local decoder=createDisassembler()
 local register_names = {'RAX','RBX','RCX','RDX','RSI','RDI','RBP','RSP','RIP',
   'R8','R9','R10','R11','R12','R13','R14','R15','EFLAGS'}
@@ -69,7 +93,11 @@ local function finish(job,reason)
       assert(removed==true, 'Cannot remove owned breakpoint: '..tostring(remove_error))
       local key=tostring(job.pid)..':'..hex(job.address)
       retired[key]=(retired[key] or 0)+1
-    end -- Process exit destroys its threads and debug-register state.
+    elseif debugger_pid==job.pid and debugger_handle==job.handle then
+      -- Process exit destroys its threads/registers, but CE (notably VEH) may
+      -- retain a started debugger. Release it before another target can reuse it.
+      detach_debugger()
+    end
   end)
   job.cleanup_error=not ok and tostring(err) or nil
   job.removed=ok
@@ -127,8 +155,7 @@ local function begin_watch(p,access)
   assert(type(seconds)=='number' and seconds==seconds and seconds>=0.1 and seconds<=120,
     'seconds must be 0.1..120')
   bytes_at(a,size)
-  if not debug_isDebugging() then debugProcess(1) end
-  assert(debug_isDebugging(), 'Cannot start the debugger')
+  ensure_debugger(pid)
   -- Avoid replacing an existing user's breakpoint, including overlapping data ranges.
   local seen={}
   for _,b in pairs(debug_getBreakpointList() or {}) do
@@ -136,7 +163,7 @@ local function begin_watch(p,access)
     seen[key]=(seen[key] or 0)+1
     assert(b<a-7 or b>=a+size or seen[key]<=(retired[key] or 0), 'Existing breakpoint overlaps this watch')
   end
-  local job={pid=pid,address=a,size=size,seconds=seconds,is64=targetIs64Bit(),
+  local job={pid=pid,handle=getOpenedProcessHandle(),address=a,size=size,seconds=seconds,is64=targetIs64Bit(),
     access=access,modules=enumModules(),entries=array(),by_address={},errors=array(),
     total_hits=0,unattributed_hits=0,accepting=true,started=getTickCount()}
   local set,id=debug_setBreakpoint(a,size,access and bptAccess or bptWrite,bpmDebugRegister,
@@ -151,7 +178,7 @@ local function begin_watch(p,access)
     job.timer=createTimer(nil,false)
     job.timer.Interval=math.max(10,math.min(100,math.floor(seconds*1000)))
     job.timer.OnTimer=function()
-      if getOpenedProcessID()~=job.pid then finish(job,'process_changed')
+      if getOpenedProcessID()~=job.pid or getOpenedProcessHandle()~=job.handle then finish(job,'process_changed')
       elseif not getProcesslist()[job.pid] or not debug_isDebugging() then finish(job,'process_exited')
       elseif (getTickCount()-job.started)%4294967296>=seconds*1000 then finish(job,'completed') end
     end
@@ -172,12 +199,16 @@ function M.watch_result(job)
     unattributed_hits=job.unattributed_hits,errors=job.errors,
     breakpoint_removed=job.removed,cleanup_method='debug_removeBreakpointByID'}
 end
-function M.before_attach() assert(not active, 'Cannot attach during a hardware watch') end
+function M.before_attach()
+  assert(not active, 'Cannot attach during a hardware watch')
+  detach_debugger() -- Detach while CE still has the old process open.
+end
 function M.status()
   local count=0; local pid=getOpenedProcessID()
   for _,p in pairs(patches) do if p.pid==pid then count=count+1 end end
   local debugging=debug_isDebugging()
-  return {debugging=debugging,paused=isPaused(),monitoring=active~=nil,
+  return {debugging=debugging,debugger_pid=debugging and debugger_pid or nil,
+    paused=isPaused(),monitoring=active~=nil,
     watch_address=active and hex(active.address) or nil,saved_patches=count}
 end
 local function with_paused(fn)
