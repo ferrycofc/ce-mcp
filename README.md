@@ -66,6 +66,35 @@ One scan exists per CE bridge. Concurrent scan mutations are rejected while scan
 
 The fixture starts `tests/target.py` as an independent process with its own allocated page. It verifies all seven scan/read/write types, all supported numeric first/next modes, unknown snapshots and refinements, full uint64 precision, signed writes and range errors, CE float rounding precision, first-20/paged/empty/live results, scan replacement, all seven types of freezing with target-side overwrite/read verification, unlocking, whole-process scanning without bounds, concurrency of status calls, and expected errors. A real official SDK client initializes the stdio server, verifies all 11 tool schemas, and calls all 11 tools with content assertions. All memory writes go exclusively to the disposable target, not Tutorial. CE was restarted to prove autorun loads both modules. The original Tutorial process remained alive; no tutorial controls, values, or stage transitions were changed. Scanner storage uses the user's existing E:\CEBUFFER setting.
 
+## Step 3: debugger
+
+`ce/debugger.lua` adds five tools (16 tools in total):
+
+| Tool | Arguments | Result |
+| --- | --- | --- |
+| `find_what_writes` | `address`, `seconds=5`, `size=1` | Hardware write watch with per-instruction hit counts and first-hit registers |
+| `find_what_accesses` | same | Hardware read/write watch |
+| `disassemble` | `address`, `count=10` (1..200) | Sequential instruction addresses, raw bytes, instruction text, module offsets and sizes |
+| `nop_instruction` | `address` at an instruction start | Replaces exactly one instruction with same-length `90` bytes and saves its original bytes |
+| `restore_instruction` | original `address` | Verifies the NOP bytes and restores the saved original bytes |
+
+Watches accept 0.1..120 seconds and hardware sizes 1/2/4, plus 8 for x64; the address must be aligned to size. The bridge starts the Windows debugger if none is active, otherwise uses the current CE debugger. It explicitly requests `bpmDebugRegister` with `bptWrite` or `bptAccess`; no software/exception-breakpoint fallback. One watch runs at a time. Requests reject overlapping pre-existing breakpoints, attaching another process, and NOP edits during a watch. Status includes a `debugger` object with `debugging`, `paused`, `monitoring`, `watch_address` (when active) and `saved_patches` for the current PID. A completed watch removes its own full breakpoint identity and leaves other callbacks intact; an independent CE timer performs expiry cleanup even if the pipe client disconnects. Callback errors are recorded and execution is continued. Debugger attachment remains active after a watch.
+
+Watch responses contain `instructions`, `total_hits`, `unattributed_hits`, `errors`, elapsed time, completion `reason` and `breakpoint_removed`. Each instruction has a hexadecimal `address`, `symbol` (`module+offset`), `module`, `module_offset`, `bytes`, `instruction`, `size`, `hit_count`, first-hit hexadecimal `registers`, and `stopped_ip`. Dynamically allocated/JIT code without a containing module uses a raw address rather than inventing a module name. All unique instruction addresses are collected; responses beyond the pipe's 1 MiB limit return an explicit error recommending a shorter watch.
+
+**Post-instruction attribution:** x86/x64 hardware data breakpoints report IP after the memory instruction. The bridge uses CE's documented `getPreviousOpcode(stopped_ip)`, decodes that candidate and checks `candidate + size == stopped_ip`. The saved register context is the first hit's **post-execution** context; IP is retained separately from the inferred writer/accessor address. CE documents backwards decoding as an estimate: ambiguous x86 encodings and control-flow/string instructions can defeat this heuristic. Responses label it `attribution="ce_previous_opcode"`; failed attribution increments `unattributed_hits` and records an error rather than reporting the next instruction as a proven writer.
+
+NOP operations pause a running target for the patch and readback, then resume it; an already paused target stays paused. Saved originals are keyed by PID/address in the current CE Lua session. Overlapping patches are rejected. Restore refuses to clobber a subsequent external edit. Restore patches **before restarting CE**, because the session's backups are in memory. Return values include original/patched hex bytes, size, process and restored state. The tested native RX code page retained its original protection.
+
+### Debugger test fixture
+
+```powershell
+& E:\workspace\ce-mcp\tests\build_debug_fixture.ps1
+& E:\workspace\ce-mcp\.venv\Scripts\python.exe -B E:\workspace\ce-mcp\tests\step3_integration.py
+```
+
+The build requires the installed Visual Studio 2022 Community x64 C/MASM tools. All build intermediates, executable, TEMP/TMP and compiler outputs are under `E:\workspace\ce-mcp\work`; no builds run on C:. `debug_target.c` + `debug_target.asm` provide independent known writers/readers in a real PE module: `89 11` (`mov [rcx],edx`) and `8B 01` (`mov eax,[rcx]`), each followed by `ret`. Tests check exact module offsets, stopped-IP correction (+2), first registers, write/access counts, zero/repeated watches, client disconnect, process exit, active-watch rejection of conflicting operations, NOP execution behavior, original-byte restoration and edit conflicts. Independent Windows `GetThreadContext` checks hardware debug-register enable bits during and after monitoring; this matters because CE's `debug_getBreakpointList` includes inactive retired descriptors. The official SDK stdio client verifies 16 schemas and all five debugger tools with actual hits/patches. These tests never attach, debug or modify Tutorial.
+
 ## Codex registration
 
 `D:\CodexData\config.toml` contains `[mcp_servers.cheat_engine]` launching the dedicated Python interpreter with the absolute server path. Restart Codex to load the newly registered server. CE must be running; the MCP server can start without CE and returns a clear connection error until CE is available.

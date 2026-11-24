@@ -53,7 +53,14 @@ def request(method, **params):
     payload = json.dumps({"method": method, "params": params}, ensure_ascii=False).encode("utf-8")
     if len(payload) > MAX_FRAME:
         raise ValueError("Request too large")
-    deadline = time.monotonic() + (150.0 if method in {"scan_first", "scan_next"} else TIMEOUT)
+    if method in {'find_what_writes','find_what_accesses'}:
+        seconds=params.get('seconds',5)
+        if not isinstance(seconds,(int,float)) or not 0.1 <= seconds <= 120:
+            raise ToolError('seconds must be 0.1..120')
+        timeout=seconds+30
+    else:
+        timeout=150.0 if method in {'scan_first','scan_next'} else TIMEOUT
+    deadline = time.monotonic() + timeout
     try:
         while True:
             try:
@@ -202,6 +209,50 @@ def set_frozen(id: int, frozen: bool, value: str | None = None) -> dict:
     if value is not None:
         params['value'] = value
     return request('set_frozen', **params)
+
+
+@mcp.tool()
+def find_what_writes(address: str, seconds: float = 5, size: int = 1) -> dict:
+    """Watch target CPU writes with a hardware breakpoint for 0.1..120 seconds.
+
+    size is 1,2,4 or 8 on x64 and the address must be aligned to it. Returns instruction
+    module+offset (when module-backed), disassembly, hit count and first-hit hex registers.
+    Hardware data breakpoints stop after execution: attribution uses CE's previous-opcode
+    estimate with an instruction-end check; stopped_ip is retained. Removes the owned
+    breakpoint on expiry, even if this client disconnects. One concurrent watch is allowed.
+    """
+    return request('find_what_writes',address=address,seconds=seconds,size=size)
+
+
+@mcp.tool()
+def find_what_accesses(address: str, seconds: float = 5, size: int = 1) -> dict:
+    """Like find_what_writes, but collect both reads and writes to the watched range."""
+    return request('find_what_accesses',address=address,seconds=seconds,size=size)
+
+
+@mcp.tool()
+def disassemble(address: str, count: int = 10) -> dict:
+    """Decode 1..200 x86/x64 instructions, returning addresses, module offsets, bytes and text."""
+    return request('disassemble',address=address,count=count)
+
+
+@mcp.tool()
+def nop_instruction(address: str) -> dict:
+    """Replace one complete instruction with the same number of 0x90 bytes; save its original.
+
+    Temporarily pauses a running target and verifies the write. Backups live in the CE Lua
+    session and are scoped to PID/address; restore patches before restarting CE.
+    """
+    return request('nop_instruction',address=address)
+
+
+@mcp.tool()
+def restore_instruction(address: str) -> dict:
+    """Restore the CE-session NOP backup for this process/address and verify original bytes.
+
+    Refuses to overwrite bytes changed by another editor after the NOP patch.
+    """
+    return request('restore_instruction',address=address)
 
 
 if __name__ == "__main__":

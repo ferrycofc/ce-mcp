@@ -3,15 +3,31 @@ if CE_MCP_BRIDGE then return end
 local json = require('json')
 local MAX_FRAME = 1024 * 1024
 local tools = dofile([[E:\workspace\ce-mcp\ce\tools.lua]])
+local debugger = dofile([[E:\workspace\ce-mcp\ce\debugger.lua]])
+local function invalid_json_path(v,path,seen)
+  local kind=type(v)
+  if kind=='table' then
+    seen=seen or {}; if seen[v] then return path..' (cycle)' end; seen[v]=true
+    for k,item in pairs(v) do
+      local problem=invalid_json_path(item,path..'.'..tostring(k),seen)
+      if problem then return problem end
+    end
+    seen[v]=nil
+  elseif kind~='nil' and kind~='boolean' and kind~='number' and kind~='string' then
+    return path..' ('..kind..')'
+  end
+end
 local function integer(v) return type(v) == 'number' and v == math.floor(v) end
 local function status()
   local pid = getOpenedProcessID()
   local processes = getProcesslist()
-  return {version = getCEVersion(), pid = pid, process_name = processes[pid]}
+  return {version = getCEVersion(), pid = pid, process_name = processes[pid],debugger=debugger.status()}
 end
 local function dispatch(req)
   assert(type(req) == 'table' and type(req.method) == 'string', 'Invalid request')
   local p = req.params or {}
+  local debug_handled, debug_result = debugger.dispatch(req.method,p)
+  if debug_handled then return debug_result end
   local handled, result = tools.dispatch(req.method,p)
   if handled then return result end
   if req.method == 'ce_status' then return status() end
@@ -41,6 +57,7 @@ local function dispatch(req)
     end
     assert(integer(pid) and pid > 0 and processes[pid], 'Process not found')
     if getOpenedProcessID() ~= pid then
+      debugger.before_attach()
       tools.before_attach()
       openProcess(pid)
     end
@@ -84,8 +101,20 @@ local function serve(pipe)
             return pcall(tools.finish_scan, waited and done~=false, waited and 'Scan timed out' or tostring(done))
           end)
         end
+        if ok and type(result)=='table' and result.__watch then
+          local job=result.__watch
+          repeat sleep(25) until synchronize(function() return debugger.watch_done(job) end)
+          ok,result=synchronize(function() return pcall(debugger.watch_result,job) end)
+        end
       else result = req end
-      local response = json.encode(ok and {ok=true, result=result} or {ok=false, error=tostring(result)})
+      local encoded,response = pcall(json.encode,ok and {ok=true, result=result} or {ok=false, error=tostring(result)})
+      if not encoded then
+        response=json.encode({ok=false,error='Response JSON encoding failed at '..
+          (invalid_json_path(result,'result') or 'unknown field')..': '..tostring(response)})
+      end
+      if #response>MAX_FRAME then
+        response=json.encode({ok=false,error='Response exceeds 1 MiB; use fewer disassembly instructions or a shorter watch'})
+      end
       if pipe.writeDword(#response) ~= 4 then break end
       if pipe.writeString(response) ~= #response then break end
     end

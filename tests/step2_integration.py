@@ -198,7 +198,7 @@ async def mcp_tests(target):
             names={tool.name for tool in (await client.list_tools()).tools}
             expected={'ce_status','list_processes','attach','read_memory','scan_first','scan_next',
                 'scan_results','read_value','write_value','add_to_table','set_frozen'}
-            assert names==expected,names
+            assert names>=expected,names
             async def call(name,**arguments):
                 result=await client.call_tool(name,arguments)
                 assert not result.is_error,result
@@ -239,10 +239,9 @@ if __name__=='__main__':
         # Attaching away clears our scan/unfreezes records before target exit; never write Tutorial.
         try:
             available=request('list_processes')['processes']
-            if original and any(p['pid']==original for p in available):
+            if original and any(p['pid']==original and p['name']!='Tutorial-x86_64.exe' for p in available):
                 request('attach',pid=original)
             else:
-                tutorial=next(p for p in available if p['name']=='Tutorial-x86_64.exe')
-                request('attach',pid=tutorial['pid'])
+                request('attach',pid=__import__('os').getpid())
         finally:
             target.close()
