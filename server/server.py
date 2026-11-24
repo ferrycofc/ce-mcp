@@ -255,5 +255,55 @@ def restore_instruction(address: str) -> dict:
     return request('restore_instruction',address=address)
 
 
+@mcp.tool()
+def read_pointer(base: str, offsets: list[int | str], value_type: ValueType = '4bytes',
+                 length: int = 256) -> dict:
+    """Trace a pointer chain and read the final typed value. base accepts module+hex-offset.
+
+    offsets are in BASE-TO-LEAF order: address = dereference(address) + offset at each layer.
+    Integer offsets are decimal; string offsets are hexadecimal, optionally signed/0x-prefixed.
+    This order is the reverse of CE's top-to-bottom pointer-record offsets. Returns every
+    dereference address, pointer value and next address. Uses 8-byte pointers on x64, 4 on x86.
+    Empty offsets means no dereference (read base directly). Up to 64 signed 32-bit offsets.
+    """
+    return request('read_pointer',base=base,offsets=offsets,value_type=value_type,length=length)
+
+
+@mcp.tool()
+def write_pointer(base: str, offsets: list[int | str], value_type: ValueType, value: str) -> dict:
+    """Resolve base-to-leaf offsets as in read_pointer, write only the final value and read back.
+
+    Value is a decimal string (or UTF-8 text for string). Intermediate pointers are not modified.
+    """
+    return request('write_pointer',base=base,offsets=offsets,value_type=value_type,value=value)
+
+
+@mcp.tool()
+def add_pointer_to_table(base: str, offsets: list[int | str], value_type: ValueType,
+                         description: str = '', value: str | None = None,
+                         frozen: bool = False, length: int = 256) -> dict:
+    """Create a native CE pointer record that follows pointer changes, with optional value/freeze.
+
+    Offsets use base-to-leaf order as in read_pointer; CE native/UI order is reversed internally.
+    The base module expression is preserved. At least one offset is required. Returns record ID,
+    resolved address, both offset orders and actual CE offset texts. Use set_frozen on its ID.
+    """
+    params=dict(base=base,offsets=offsets,value_type=value_type,description=description,
+                frozen=frozen,length=length)
+    if value is not None:
+        params['value']=value
+    return request('add_pointer_to_table',**params)
+
+
+@mcp.tool()
+def address_info(address: str) -> dict:
+    """Classify an address and return module+offset and its Windows memory-region attributes.
+
+    Distinguishes static module, dynamic private, mapped, reserved and free memory. MEM_PRIVATE
+    alone does not prove heap ownership. Includes protection/read/write/execute/guard properties.
+    """
+    return request('address_info',address=address)
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")

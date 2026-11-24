@@ -196,7 +196,8 @@ async def mcp_tests(target):
         async with ClientSession(*streams) as client:
             await client.initialize()
             names={t.name for t in (await client.list_tools()).tools}
-            assert len(names)==16,names
+            assert len(names)>=16 and {'find_what_writes','find_what_accesses','disassemble',
+                'nop_instruction','restore_instruction'}<=names,names
             async def call(method,**params):
                 result=await client.call_tool(method,params)
                 assert not result.is_error,result

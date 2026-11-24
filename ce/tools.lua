@@ -1,5 +1,6 @@
 -- Scan state and typed values live in CE, not in Python.
 local M = {}
+local addressing=dofile([[E:\workspace\ce-mcp\ce\addressing.lua]])
 local types = {byte=vtByte, ['2bytes']=vtWord, ['4bytes']=vtDword,
   ['8bytes']=vtQword, float=vtSingle, double=vtDouble, string=vtString}
 local widths = {byte=1, ['2bytes']=2, ['4bytes']=4, ['8bytes']=8}
@@ -148,11 +149,14 @@ local function page(start,count)
       snapshot=true, total_kind='bytes', scanned_bytes=progress.TotalAddressesToScan,
       message='CE unknown initial value stores a region snapshot. Filter with scan_next to enumerate addresses.'}
   end
+  local modules=enumModules()
   for i=start,math.min(s.found.Count-1,start+count-1) do
     local a='0x'..s.found.Address[i]
+    local info=addressing.module_info(address(a),modules)
     local ok,value=pcall(read,s.value_type,address(a),s.string_length)
     results[#results+1]={index=i,address=a,value=ok and value or nil,
-      error=not ok and tostring(value) or nil}
+      error=not ok and tostring(value) or nil,is_static=info.is_static,
+      symbol=info.symbol,module=info.module,module_offset=info.module_offset}
   end
   return {total=s.found.Count, total_kind='addresses', start=start, results=results, value_type=s.value_type}
 end
@@ -205,9 +209,31 @@ function M.finish_scan(ok,err)
   return page(0,20)
 end
 local function record_result(r)
-  return {id=r.ID, address=r.Address, description=r.Description, value=r.Value, frozen=r.Active}
+  local value=r.Value -- Refresh native resolution before reading CurrentAddress.
+  local offsets=setmetatable({}, {isArray=true})
+  local ce_offsets=setmetatable({}, {isArray=true})
+  local texts=setmetatable({}, {isArray=true})
+  for i=0,r.OffsetCount-1 do
+    ce_offsets[i+1]=addressing.offset_text(r.Offset[i])
+    texts[i+1]=r.OffsetText[i]
+    offsets[r.OffsetCount-i]=ce_offsets[i+1]
+  end
+  return {id=r.ID, address=r.Address, description=r.Description, value=value, frozen=r.Active,
+    is_pointer=r.OffsetCount>0,offset_count=r.OffsetCount,offsets=offsets,offset_order='base_to_leaf',
+    ce_offsets=ce_offsets,ce_offset_texts=texts,resolved_address=addressing.hex(r.CurrentAddress)}
 end
 function M.dispatch(method,p)
+  if method=='address_info' then
+    attached(); return true,addressing.info(addressing.resolve(p.address))
+  end
+  if method=='read_pointer' or method=='write_pointer' then
+    attached(); check_type(p.value_type)
+    local result,a=addressing.trace(p.base,p.offsets)
+    if method=='write_pointer' then write(p.value_type,a,p.value) end
+    result.value_type=p.value_type
+    result.value=read(p.value_type,a,p.length or (p.value_type=='string' and p.value and math.max(1,#p.value) or nil))
+    return true,result
+  end
   if method=='scan_first' then return true,begin_scan(p,true) end
   if method=='scan_next' then return true,begin_scan(p,false) end
   if method=='scan_results' then return true,page(p.start,p.count) end
@@ -217,11 +243,19 @@ function M.dispatch(method,p)
     return true,{address=string.format('0x%X',a),value_type=p.value_type,
       value=read(p.value_type,a,p.length or (p.value_type=='string' and p.value and math.max(1,#p.value) or nil))}
   end
-  if method=='add_to_table' then
-    local pid=attached(); local a=address(p.address); check_type(p.value_type)
+  if method=='add_to_table' or method=='add_pointer_to_table' then
+    local pid=attached(); check_type(p.value_type)
+    local pointer=method=='add_pointer_to_table'
+    local a,offsets
+    if pointer then
+      local trace
+      trace,a,offsets=addressing.trace(p.base,p.offsets)
+      assert(#offsets>0, 'A CE pointer record requires at least one offset; use [0] for one dereference')
+    else a=address(p.address) end
     assert(p.description==nil or type(p.description)=='string', 'Invalid description')
     assert(p.frozen==nil or type(p.frozen)=='boolean', 'frozen must be boolean')
     local value=p.frozen_value
+    if pointer then value=p.value end
     if value~=nil then value=validated(p.value_type,value) end
     local length=p.length or (p.value_type=='string' and value and math.max(1,#value) or 256)
     if p.value_type=='string' then
@@ -231,9 +265,20 @@ function M.dispatch(method,p)
     local actual=read(p.value_type,a,length)
     local r=getAddressList().createMemoryRecord()
     local ok,result=pcall(function()
-      r.Type=types[p.value_type]; r.Address=string.format('%X',a)
+      r.Type=types[p.value_type]
+      if pointer then
+        r.Address=type(p.base)=='string' and p.base or string.format('%X',p.base)
+        r.OffsetCount=#offsets
+        for i=0,#offsets-1 do r.Offset[i]=offsets[#offsets-i] end
+        local refreshed=r.Value
+        assert(r.CurrentAddress==a, 'Native CE pointer offset order/resolution does not match traced address')
+      else r.Address=string.format('%X',a) end
       r.Description=p.description or 'MCP '..r.Address
       if p.value_type=='string' then r.String.Size=length; r.String.Unicode=false end
+      if pointer and value~=nil then
+        write(p.value_type,a,value)
+        actual=read(p.value_type,a,length)
+      end
       if p.frozen then
         r.Value=value or actual; r.Active=true
         assert(r.Active, 'Cannot freeze record')

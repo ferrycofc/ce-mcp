@@ -95,6 +95,45 @@ NOP operations pause a running target for the patch and readback, then resume it
 
 The build requires the installed Visual Studio 2022 Community x64 C/MASM tools. All build intermediates, executable, TEMP/TMP and compiler outputs are under `E:\workspace\ce-mcp\work`; no builds run on C:. `debug_target.c` + `debug_target.asm` provide independent known writers/readers in a real PE module: `89 11` (`mov [rcx],edx`) and `8B 01` (`mov eax,[rcx]`), each followed by `ret`. Tests check exact module offsets, stopped-IP correction (+2), first registers, write/access counts, zero/repeated watches, client disconnect, process exit, active-watch rejection of conflicting operations, NOP execution behavior, original-byte restoration and edit conflicts. Independent Windows `GetThreadContext` checks hardware debug-register enable bits during and after monitoring; this matters because CE's `debug_getBreakpointList` includes inactive retired descriptors. The official SDK stdio client verifies 16 schemas and all five debugger tools with actual hits/patches. These tests never attach, debug or modify Tutorial.
 
+## Step 4: pointers and address information
+
+Four additional tools bring the total to 20:
+
+| Tool | Arguments | Result |
+| --- | --- | --- |
+| `read_pointer` | `base`, `offsets`, `value_type="4bytes"`, string `length=256` | Each dereference and the final typed value |
+| `write_pointer` | `base`, `offsets`, `value_type`, `value` | Same trace, with a write/readback at the final address |
+| `add_pointer_to_table` | `base`, `offsets`, `value_type`, `description=""`, optional `value`, `frozen=false`, string `length=256` | A native CE pointer record, with stable ID and live resolved address |
+| `address_info` | `address` | Static module information plus Windows region attributes/classification |
+
+`base` accepts CE expressions such as `game.exe+1234`. Offsets are **base-to-leaf**: for each offset, read a pointer at the current address, then add that offset. Integer inputs are decimal; string inputs are hexadecimal with optional sign and `0x` prefix. For example, `offsets=["20","-10","38"]` means:
+
+```text
+a1 = pointer_at(base) + 0x20
+a2 = pointer_at(a1)   - 0x10
+final = pointer_at(a2) + 0x38
+value = typed_read(final)
+```
+
+The API accepts up to 64 signed 32-bit offsets. `offsets=[]` performs no dereference and reads/writes `base` directly; `[0]` dereferences once. A native pointer record requires at least one offset. A null/unreadable link returns an error identifying its layer and pointer-slot address, without writing through the failed chain. Pointer reads use QWORDs for a 64-bit target and DWORDs for a 32-bit target, independently of CE/Python host width and the final value's type.
+
+Trace results contain `base`, `base_address`, `pointer_size`, `offset_order="base_to_leaf"`, normalized `offsets`, `layers`, final `address`, `value_type` and `value`. Each layer provides `index` (1-based), `address` (pointer slot), `pointer_value`, `offset` and `next_address`. Values retain the existing typed-memory string representation and precision rules. The chain is a sequential runtime observation, not a frozen snapshot of concurrently changing target memory.
+
+**CE record/UI order is reversed:** the example above becomes native `Offset[0..2] = [0x38,-0x10,0x20]`, with actual `OffsetText = ["38","-10","20"]`. The bridge preserves the original base expression in `MemoryRecord.Address`, sets `OffsetCount` and native `Offset[]`, and verifies `CurrentAddress` against the trace before applying an optional value or freeze. It never substitutes a fixed leaf address. Records return `is_pointer`, `offset_count`, API `offsets`, `ce_offsets`, actual `ce_offset_texts`, and `resolved_address`. Existing `set_frozen` works on their returned IDs. With `value` omitted, `frozen=true` freezes the current value; with `value` supplied, it is written even when not frozen. Strings use the supplied record length. Attachment changes unfreeze pointer records through the same lifecycle as ordinary records.
+
+`address_info` returns `is_static`, `is_dynamic`, `classification` and `region`. A module address also includes `symbol` (`module+hex-offset`), `module`, `module_base`, `module_offset`, and `module_path`. Classifications distinguish `static_module`, `dynamic_private`, `mapped`, `unlisted_image`, `reserved`, and `free`. MEM_PRIVATE may be heap, stack or VirtualAlloc memory; region metadata alone cannot establish heap provenance. Region details include base/allocation base, size as decimal and hex strings, raw state/type codes and names, protection codes/names, allocation protection, readable/writable/executable, guard, copy-on-write, no-cache and write-combine flags. Guarded regions are not reported as immediately readable/writable.
+
+Every enumerated scan result now includes `is_static`; module-backed results additionally have `symbol`, `module`, and `module_offset`. This applies to the first 20 results of scan_first/scan_next and to scan_results pages, using a fresh module list per page. Unknown-initial snapshots still have no address entries until refinement.
+
+### Pointer validation — 2026-11-25
+
+```powershell
+& E:\workspace\ce-mcp\tests\build_pointer_fixture.ps1
+& E:\workspace\ce-mcp\.venv\Scripts\python.exe -B E:\workspace\ce-mcp\tests\step4_integration.py
+```
+
+The helper builds x64 and x86 versions of `pointer_target.c` using installed Visual Studio tools, exclusively under `E:\workspace\ce-mcp\work\pointer-fixture`. The native fixture supplies an independently known three-layer chain with asymmetric/negative offsets, high x64 heap addresses and poisoned DWORDs after x86 pointer slots. Both versions verify all seven final types, exact trace addresses/values, native CE offset order and texts, optional initial setting, lock/unlock, and retargeting a middle link while a native pointer record follows/freezes the new leaf. Module, heap/private, reserved, guarded, mapped and free-region reports are checked against an independent OS VirtualQueryEx call. Static and dynamic scan metadata are checked for first, next and paged results. Real SDK clients discover 20 schemas and exercise all four new tools for each architecture. Fixtures never attach, write, debug or send input to Tutorial.
+
 ## Codex registration
 
 `D:\CodexData\config.toml` contains `[mcp_servers.cheat_engine]` launching the dedicated Python interpreter with the absolute server path. Restart Codex to load the newly registered server. CE must be running; the MCP server can start without CE and returns a clear connection error until CE is available.

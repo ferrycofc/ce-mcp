@@ -19,3 +19,13 @@ Final validation passed against real CE and official MCP SDK stdio: all 11 tools
 Final cold-start suite and the complete step-2 regression passed through real CE and official SDK stdio. Native fixture processes exited; all NOPs restored and all monitored hardware slots disabled. Restart CE once after tests to discard test-only address records/debugger descriptors, leaving it unattached. Tutorial PID 64016 stayed unchanged and was not attached during step 3. Commit: ⑯ 调试器.
 
 Constraints: E: temporary/cache storage; restart CE permitted; keep Tutorial alive and unmodified. No unrelated audit.
+
+# Step 4: pointers
+
+- [x] Read installed celua.txt: readPointer/targetIs64Bit, MemoryRecord.OffsetCount/Offset/CurrentAddress, enumModules and getMemoryRegionInfo.
+- [x] Implement base-to-leaf traced pointer reads/writes and native pointer records using existing typed-value/freeze helpers.
+- [x] Add address_info and static module metadata to scan results.
+- [x] Verify CE native offset order, negative offsets, retargeted intermediate pointers and lock behavior with independent x64/x86 native fixtures; never attach Tutorial.
+- [x] Run relevant scan/debugger regressions, document and commit ⑰ 指针.
+
+Both native architecture suites and real MCP clients passed (20 tools), followed by the full 11-tool scan/memory and five-tool debugger regressions. Test processes exited and all freezes/NOPs/hardware watches were cleaned. Final CE restart discards only the test session's address records and leaves CE unattached. Commit: ⑰ 指针.
