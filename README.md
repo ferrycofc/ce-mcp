@@ -154,6 +154,8 @@ The isolated step 5 test uses `CE_MCP_PIPE_NAME=ce_mcp_step5` for both a separat
 
 `run_lua(code, timeout=3)` executes a Lua chunk in CE's main Lua state. It returns captured `print` lines, up to 100 return values, elapsed time, and error/traceback details. A Lua instruction hook interrupts computation after 0.05–30 seconds; a blocking native CE call cannot be preempted until that call returns. Returned tables are converted to JSON-safe arrays/objects, with cycles and deep values marked. A Lua error is reported as `ok=false` in the tool result.
 
+`run_lua` installs its print capture only in that chunk's environment. It leaves CE's global `print` intact, so subsequent scripts in CE's Lua Engine still write to its output pane. The focused `tests/step6_print_regression.py` checks this across success, syntax error, runtime error and timeout.
+
 `speedhack(enabled, speed=1)` uses CE's `speedhack_setSpeed` and `speedhack_getSpeed`; disabling also clears CE's speedhack checkbox. Its result reports the active checkbox state and current multiplier. `inject_dll(path)` accepts an absolute local DLL path, calls CE's `injectDLL`, then returns its module name, path and base address from `enumModules`.
 
 `mono(action='status', namespace='', class_name=None, method_name=None, instance_address=None)` uses CE's installed Mono extension. Actions are `status`, `assemblies`, `class`, `methods`, and `fields`. Method lookup optionally filters by exact name. Fields return type, offset, flags and address; primitive static values and primitive instance values (when given an object address) are read. A process without a Mono/IL2CPP runtime reports `is_mono=false` with a reason, without starting CE's collector.

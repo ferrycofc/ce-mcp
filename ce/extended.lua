@@ -51,14 +51,14 @@ local function run_lua(p)
   assert(type(p.code)=='string' and #p.code<=65536,'code must be a string of at most 65536 bytes')
   local seconds=p.timeout or 3
   assert(finite(seconds) and seconds>=0.05 and seconds<=30,'timeout must be 0.05..30 seconds')
-  local compile,err=load(p.code,'=ce_mcp_run_lua','t',setmetatable({},{__index=_G,__newindex=_G}))
+  local scope=setmetatable({},{__index=_G,__newindex=_G})
+  local compile,err=load(p.code,'=ce_mcp_run_lua','t',scope)
   if not compile then return {ok=false,error=tostring(err),output=array(),returns=array(),timed_out=false} end
   local output=array()
   local output_bytes=0
   local output_truncated=false
-  -- The chunk's environment captures print without changing CE's global print.
-  local _,scope=debug.getupvalue(compile,1)
-  if scope then scope.print=function(...)
+  -- rawset bypasses __newindex=_G; ordinary assignment here would replace CE's print.
+  rawset(scope,'print',function(...)
     local parts={}
     for i=1,select('#',...) do parts[i]=tostring(select(i,...)) end
     local line=table.concat(parts,'\t')
@@ -68,7 +68,7 @@ local function run_lua(p)
       output_bytes=output_bytes+math.min(#line,remaining)
       if #line>remaining then output_truncated=true end
     end
-  end end
+  end)
   local deadline=getTickCount()+math.ceil(seconds*1000)
   local oldhook,oldmask,oldcount=debug.gethook()
   local marker='CE_MCP_LUA_TIMEOUT'
