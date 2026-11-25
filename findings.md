@@ -33,3 +33,9 @@
 - x64 heap pointers were above 4 GiB and read as full QWORDs; x86 slots carried nonzero poison DWORDs after each 4-byte pointer so accidental 8-byte dereferences would fail. Both architectures passed all seven final value types, including uint64 and UTF-8 strings.
 - address_info region base/allocation base/size/state/protect/type matched independent Windows VirtualQueryEx for module data/code, HeapAlloc memory, reserved, guarded and mapped regions; address 0 correctly classified as free. Guard-page inspection did not read or consume the guard.
 - Static module+offset metadata was checked on scan_first, scan_results and scan_next; private-memory results are explicitly is_static=false. Actual official SDK stdio clients discovered 20 tools and exercised all four new tools on both architectures.
+
+## Step 5 injection APIs
+
+- Installed `celua.txt` confirms `autoAssemble(text, false, disableInfo)`, `AOBScan` wildcards, Disassembler wildcard metadata, and `getInstructionSize`. Named scripts retain CE's `disableInfo` until DISABLE runs.
+- Template signatures extend whole instructions and mask relocatable bytes until they are unique within the module. On x64, `alloc(newmem,1000,site)` requests a nearby cave and `jmp long` forces a five-byte relative jump. `reassemble` preserves relative instruction operands; DISABLE writes back the exact original bytes.
+- The native x64 fixture confirmed a seven-byte overwrite, `E9` plus two NOPs, near allocation, a +2 behavior change, and byte-for-byte restoration. Structure comparison identified integer, float and pointer differences. Tests ran through a separate CE process and pipe.

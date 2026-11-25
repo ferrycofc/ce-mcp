@@ -4,6 +4,9 @@ local json = require('json')
 local MAX_FRAME = 1024 * 1024
 local tools = dofile([[E:\workspace\ce-mcp\ce\tools.lua]])
 local debugger = dofile([[E:\workspace\ce-mcp\ce\debugger.lua]])
+local injection = dofile([[E:\workspace\ce-mcp\ce\injection.lua]])
+local pipe_name = os.getenv('CE_MCP_PIPE_NAME') or 'ce_mcp'
+assert(pipe_name:match('^[%w_]+$'), 'Invalid CE_MCP_PIPE_NAME')
 local function invalid_json_path(v,path,seen)
   local kind=type(v)
   if kind=='table' then
@@ -26,6 +29,8 @@ end
 local function dispatch(req)
   assert(type(req) == 'table' and type(req.method) == 'string', 'Invalid request')
   local p = req.params or {}
+  local injection_handled, injection_result = injection.dispatch(req.method,p)
+  if injection_handled then return injection_result end
   local debug_handled, debug_result = debugger.dispatch(req.method,p)
   if debug_handled then return debug_result end
   local handled, result = tools.dispatch(req.method,p)
@@ -57,6 +62,7 @@ local function dispatch(req)
     end
     assert(integer(pid) and pid > 0 and processes[pid], 'Process not found')
     if getOpenedProcessID() ~= pid then
+      injection.before_attach()
       debugger.before_attach()
       tools.before_attach()
       openProcess(pid)
@@ -113,7 +119,7 @@ local function serve(pipe)
           (invalid_json_path(result,'result') or 'unknown field')..': '..tostring(response)})
       end
       if #response>MAX_FRAME then
-        response=json.encode({ok=false,error='Response exceeds 1 MiB; use fewer disassembly instructions or a shorter watch'})
+        response=json.encode({ok=false,error='Response exceeds 1 MiB; narrow the scan pattern/module or request fewer instructions/watch hits'})
       end
       if pipe.writeDword(#response) ~= 4 then break end
       if pipe.writeString(response) ~= #response then break end
@@ -121,11 +127,11 @@ local function serve(pipe)
   end)
   pipe.destroy()
 end
-CE_MCP_BRIDGE = {version = 1}
+CE_MCP_BRIDGE = {version = 1, injection = injection, pipe_name = pipe_name}
 createThread(function()
-  local listener = createPipe('ce_mcp', 65536, 65536, 16)
+  local listener = createPipe(pipe_name, 65536, 65536, 16)
   if not listener or not listener.valid then
-    CE_MCP_BRIDGE.error = 'Cannot create ce_mcp pipe'
+    CE_MCP_BRIDGE.error = 'Cannot create '..pipe_name..' pipe'
     return
   end
   CE_MCP_BRIDGE.listener = listener

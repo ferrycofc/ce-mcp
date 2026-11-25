@@ -4,8 +4,8 @@ Windows / Cheat Engine 7.7 / official Python MCP SDK 2.3.0.
 
 ## Installed layout
 
-- `ce/bridge.lua`: CE bridge. Background listener at `\\.\pipe\ce_mcp`, up to 16 pipe instances; each accepted client gets a worker thread. CE calls execute through `synchronize` on the main thread.
-- `ce/autorun.lua`: installed as `C:\Program Files\Cheat Engine\autorun\ce_mcp.lua`; loads the bridge from this project. Restart CE after editing the bridge. Loading twice is guarded.
+- `ce/bridge.lua`: CE bridge. Background listener at `\\.\pipe\ce_mcp`, up to 16 pipe instances; each accepted client gets a worker thread. CE calls execute through `synchronize` on the main thread. `CE_MCP_PIPE_NAME` selects a separate pipe for isolated test instances.
+- `ce/autorun.lua`: installed as `C:\Program Files\Cheat Engine\autorun\ce_mcp.lua`; loads the bridge from this project. New CE starts load the current bridge. Loading twice is guarded; the active session can be hot-loaded without restarting CE.
 - `server/server.py`: MCP stdio server. Each tool call creates its own pipe connection. CE attachment is global to CE, so another client can change the currently attached process.
 - `.venv`: dedicated Python environment.
 
@@ -17,12 +17,16 @@ Windows / Cheat Engine 7.7 / official Python MCP SDK 2.3.0.
 | `list_processes` | optional `filter` | PID/name list, case-insensitive substring match |
 | `attach` | exactly one of `name`, `pid` | Attached process status; exact executable name, case-insensitive; duplicate matches require PID |
 | `read_memory` | `address` string, `size` 1..65536 | Resolved hex address, size, space-separated hex bytes, printable ASCII; nonprintable bytes become `.` |
+| `auto_assemble` | `name`, full `script` on enable; `enable=false` to disable | Runs named `[ENABLE]`/`[DISABLE]` scripts and retains CE's disable state for restoration |
+| `aob_scan` | hex-byte/`??` `pattern`, optional `module` | All matching addresses with module+offset metadata |
+| `injection_template` | `address`, optional symbol `name` | Module-unique AOB script, complete stolen instructions, 5-byte near jump, return address and exact DISABLE bytes |
+| `compare_structures` | 2..16 `addresses`, `length`, optional `stride`/`types` | Per-offset integer, float and pointer interpretations with differing fields |
 
 Addresses accept CE expressions, for example `Tutorial-x86_64.exe`, `Tutorial-x86_64.exe+100`, or `0x100000000`. An unreadable or incomplete range returns an error instead of partial data.
 
 ## Protocol
 
-Little-endian unsigned 32-bit UTF-8 byte length, followed by JSON (maximum 1 MiB). Requests: `{"method":"ce_status","params":{}}`. Responses: `{"ok":true,"result":{...}}` or `{"ok":false,"error":"..."}`. Connections support repeated requests. Idle CE client connections expire after 15 seconds; Python calls have a 20-second I/O deadline. No arbitrary Lua execution tool is exposed. This local pipe assumes trusted local clients.
+Little-endian unsigned 32-bit UTF-8 byte length, followed by JSON (maximum 1 MiB). Requests: `{"method":"ce_status","params":{}}`. Responses: `{"ok":true,"result":{...}}` or `{"ok":false,"error":"..."}`. Connections support repeated requests. Idle CE client connections expire after 15 seconds; Python calls have a 20-second I/O deadline. `auto_assemble` executes trusted CE Auto Assembler scripts, including embedded Lua. This local pipe assumes trusted clients. Broad AOB results can exceed 1 MiB; narrow the module or use a longer pattern.
 
 ## Run and test
 
@@ -133,6 +137,18 @@ Every enumerated scan result now includes `is_static`; module-backed results add
 ```
 
 The helper builds x64 and x86 versions of `pointer_target.c` using installed Visual Studio tools, exclusively under `E:\workspace\ce-mcp\work\pointer-fixture`. The native fixture supplies an independently known three-layer chain with asymmetric/negative offsets, high x64 heap addresses and poisoned DWORDs after x86 pointer slots. Both versions verify all seven final types, exact trace addresses/values, native CE offset order and texts, optional initial setting, lock/unlock, and retargeting a middle link while a native pointer record follows/freezes the new leaf. Module, heap/private, reserved, guarded, mapped and free-region reports are checked against an independent OS VirtualQueryEx call. Static and dynamic scan metadata are checked for first, next and paged results. Real SDK clients discover 20 schemas and exercise all four new tools for each architecture. Fixtures never attach, write, debug or send input to Tutorial.
+
+## Step 5: code injection
+
+`auto_assemble(name, script)` enables a CE script with both `[ENABLE]` and `[DISABLE]` sections. CE's returned `disableInfo` stays in the Lua bridge under that name; call `auto_assemble(name, enable=false)` to run DISABLE and release its allocations. The bridge refuses an MCP process switch while a live process has an enabled script. An exited process has no bytes to restore, so its saved script is discarded on the next switch.
+
+`aob_scan` accepts space-separated hex bytes and `??` wildcards. With `module`, it keeps only complete matches inside that module; without it, it returns matches from the process. Results include `symbol` and `module_offset` when the address belongs to a module.
+
+`injection_template` requires a module instruction address. It extends whole instructions until at least 5 bytes are available, then extends a wildcard-aware AOB until it is unique in that module. The generated script allocates `newmem` near the site, forces a 5-byte `jmp long` on x64, reassembles original instructions in the cave (so relative operands keep their destinations), jumps back after the overwritten span, and restores the exact original bytes in DISABLE. Edit the marked custom-code line before enabling it. The `assert` in the script rejects changed original bytes.
+
+`compare_structures` reads 2..16 blocks and compares every byte offset by default (`stride=1`); set `stride=4` to inspect 4-byte boundaries. Each row includes 4-byte integer, float and pointer interpretations by default, raw bytes, and a `different` marker. These are sequential reads of a running process, not a frozen snapshot.
+
+The isolated step 5 test uses `CE_MCP_PIPE_NAME=ce_mcp_step5` for both a separate CE instance and the MCP server. Its native fixture demonstrates a 7-byte overwrite with an actual 5-byte near jump, changes a function result by +2 while enabled, and checks byte-for-byte restoration after disabling. The older scan and debugger suites also pass against that isolated instance. No test attaches to Tutorial.
 
 ## Codex registration
 

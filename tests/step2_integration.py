@@ -2,6 +2,7 @@
 import asyncio
 import concurrent.futures
 import json
+import os
 from pathlib import Path
 import struct
 import subprocess
@@ -191,7 +192,8 @@ def direct_tests(target):
 
 
 async def mcp_tests(target):
-    params=StdioServerParameters(command=sys.executable,args=['-B',str(ROOT/'server/server.py')])
+    params=StdioServerParameters(command=sys.executable,args=['-B',str(ROOT/'server/server.py')],
+                                 env=dict(os.environ))
     async with stdio_client(params) as streams:
         async with ClientSession(*streams) as client:
             await client.initialize()

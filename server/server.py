@@ -1,5 +1,6 @@
 """Official MCP SDK 2.x stdio server backed by the CE named pipe."""
 import json
+import os
 import struct
 import time
 from typing import Literal
@@ -12,7 +13,7 @@ import win32pipe
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-PIPE = r"\\.\pipe\ce_mcp"
+PIPE = "\\\\.\\pipe\\" + os.environ.get("CE_MCP_PIPE_NAME", "ce_mcp")
 MAX_FRAME = 1024 * 1024
 TIMEOUT = 20.0
 mcp = MCPServer("cheat_engine")
@@ -303,6 +304,56 @@ def address_info(address: str) -> dict:
     alone does not prove heap ownership. Includes protection/read/write/execute/guard properties.
     """
     return request('address_info',address=address)
+
+
+@mcp.tool()
+def auto_assemble(name: str, script: str | None = None, enable: bool = True) -> dict:
+    """Enable a named CE Auto Assembler [ENABLE]/[DISABLE] script, or disable it by name.
+
+    When enable=true, supply the full script. CE retains its disableInfo, allocations and
+    symbols in this session. With enable=false, omit script; the original DISABLE section
+    runs against the same process instance. Disable active scripts before switching targets.
+    """
+    params=dict(name=name,enable=enable)
+    if script is not None:
+        params['script']=script
+    return request('auto_assemble',**params)
+
+
+@mcp.tool()
+def aob_scan(pattern: str, module: str | None = None) -> dict:
+    """Find every match for space-separated hex bytes and ?? wildcards.
+
+    When module is specified, only complete matches within that module are returned.
+    Otherwise scans all readable process memory. Results include module+offset where known.
+    """
+    return request('aob_scan',pattern=pattern,module=module)
+
+
+@mcp.tool()
+def injection_template(address: str, name: str = 'ce_mcp_inject') -> dict:
+    """Generate a module-unique AOB injection script for a complete 5-byte near jump.
+
+    Returns the [ENABLE]/[DISABLE] script, original bytes, overwrite size, jump-back
+    address and unique pattern. On x64, alloc requests a cave within ±2 GiB. Review
+    and edit the custom-code placeholder before calling auto_assemble.
+    """
+    return request('injection_template',address=address,name=name)
+
+
+@mcp.tool()
+def compare_structures(addresses: list[str], length: int, stride: int = 1,
+                       types: list[str] | None = None) -> dict:
+    """Compare 2..16 memory blocks by offset as integer, float and pointer fields.
+
+    Samples up to 4096 bytes per address; stride controls offset spacing. types can
+    contain byte, 2bytes, 4bytes, 8bytes, float, double and pointer. Each row reports
+    values and raw-byte differences to help identify distinguishing fields.
+    """
+    params=dict(addresses=addresses,length=length,stride=stride)
+    if types is not None:
+        params['types']=types
+    return request('compare_structures',**params)
 
 
 if __name__ == "__main__":
