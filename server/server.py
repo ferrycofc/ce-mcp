@@ -59,6 +59,10 @@ def request(method, **params):
         if not isinstance(seconds,(int,float)) or not 0.1 <= seconds <= 120:
             raise ToolError('seconds must be 0.1..120')
         timeout=seconds+30
+    elif method == 'run_lua':
+        timeout=float(params.get('timeout',3))+20
+    elif method == 'mono':
+        timeout=120.0
     else:
         timeout=150.0 if method in {'scan_first','scan_next'} else TIMEOUT
     deadline = time.monotonic() + timeout
@@ -354,6 +358,52 @@ def compare_structures(addresses: list[str], length: int, stride: int = 1,
     if types is not None:
         params['types']=types
     return request('compare_structures',**params)
+
+
+@mcp.tool()
+def run_lua(code: str, timeout: float = 3) -> dict:
+    """Run CE Lua, capturing print output, return values, errors and elapsed time.
+
+    timeout is 0.05..30 seconds. Lua instruction loops are interrupted by a VM hook;
+    a blocking native CE function cannot be preempted until it returns.
+    """
+    return request('run_lua',code=code,timeout=timeout)
+
+
+@mcp.tool()
+def speedhack(enabled: bool, speed: float = 1) -> dict:
+    """Set CE's process speedhack and report its current multiplier.
+
+    enabled=false restores the normal 1x speed. speed must be >0 and <=100.
+    """
+    return request('speedhack',enabled=enabled,speed=speed)
+
+
+@mcp.tool()
+def inject_dll(path: str) -> dict:
+    """Load an absolute local DLL into the attached process via CE injectDLL.
+
+    Returns CE's module name, path and base address after injection.
+    """
+    return request('inject_dll',path=path)
+
+
+@mcp.tool()
+def mono(action: Literal['status','assemblies','class','methods','fields'] = 'status',
+         namespace: str = '', class_name: str | None = None,
+         method_name: str | None = None, instance_address: str | None = None) -> dict:
+    """Inspect an attached Mono/IL2CPP process using CE's Mono data collector.
+
+    status reports detection; assemblies lists loaded assemblies; class finds one class;
+    methods optionally filters by exact name; fields lists field metadata and reads
+    primitive values when an instance_address is supplied (or a static address exists).
+    A native target returns is_mono=false with a reason.
+    """
+    params=dict(action=action,namespace=namespace)
+    if class_name is not None: params['class_name']=class_name
+    if method_name is not None: params['method_name']=method_name
+    if instance_address is not None: params['instance_address']=instance_address
+    return request('mono',**params)
 
 
 if __name__ == "__main__":

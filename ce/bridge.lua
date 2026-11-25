@@ -5,6 +5,7 @@ local MAX_FRAME = 1024 * 1024
 local tools = dofile([[E:\workspace\ce-mcp\ce\tools.lua]])
 local debugger = dofile([[E:\workspace\ce-mcp\ce\debugger.lua]])
 local injection = dofile([[E:\workspace\ce-mcp\ce\injection.lua]])
+local extended = dofile([[E:\workspace\ce-mcp\ce\extended.lua]])
 local pipe_name = os.getenv('CE_MCP_PIPE_NAME') or 'ce_mcp'
 assert(pipe_name:match('^[%w_]+$'), 'Invalid CE_MCP_PIPE_NAME')
 local function invalid_json_path(v,path,seen)
@@ -29,6 +30,8 @@ end
 local function dispatch(req)
   assert(type(req) == 'table' and type(req.method) == 'string', 'Invalid request')
   local p = req.params or {}
+  local extended_handled, extended_result = extended.dispatch(req.method,p)
+  if extended_handled then return extended_result end
   local injection_handled, injection_result = injection.dispatch(req.method,p)
   if injection_handled then return injection_result end
   local debug_handled, debug_result = debugger.dispatch(req.method,p)
@@ -127,7 +130,7 @@ local function serve(pipe)
   end)
   pipe.destroy()
 end
-CE_MCP_BRIDGE = {version = 1, injection = injection, pipe_name = pipe_name}
+CE_MCP_BRIDGE = {version = 1, injection = injection, extended = extended, pipe_name = pipe_name}
 createThread(function()
   local listener = createPipe(pipe_name, 65536, 65536, 16)
   if not listener or not listener.valid then

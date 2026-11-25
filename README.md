@@ -150,6 +150,16 @@ The helper builds x64 and x86 versions of `pointer_target.c` using installed Vis
 
 The isolated step 5 test uses `CE_MCP_PIPE_NAME=ce_mcp_step5` for both a separate CE instance and the MCP server. Its native fixture demonstrates a 7-byte overwrite with an actual 5-byte near jump, changes a function result by +2 while enabled, and checks byte-for-byte restoration after disabling. The older scan and debugger suites also pass against that isolated instance. No test attaches to Tutorial.
 
+## Step 6: Lua, speedhack, DLL and Mono
+
+`run_lua(code, timeout=3)` executes a Lua chunk in CE's main Lua state. It returns captured `print` lines, up to 100 return values, elapsed time, and error/traceback details. A Lua instruction hook interrupts computation after 0.05–30 seconds; a blocking native CE call cannot be preempted until that call returns. Returned tables are converted to JSON-safe arrays/objects, with cycles and deep values marked. A Lua error is reported as `ok=false` in the tool result.
+
+`speedhack(enabled, speed=1)` uses CE's `speedhack_setSpeed` and `speedhack_getSpeed`; disabling also clears CE's speedhack checkbox. Its result reports the active checkbox state and current multiplier. `inject_dll(path)` accepts an absolute local DLL path, calls CE's `injectDLL`, then returns its module name, path and base address from `enumModules`.
+
+`mono(action='status', namespace='', class_name=None, method_name=None, instance_address=None)` uses CE's installed Mono extension. Actions are `status`, `assemblies`, `class`, `methods`, and `fields`. Method lookup optionally filters by exact name. Fields return type, offset, flags and address; primitive static values and primitive instance values (when given an object address) are read. A process without a Mono/IL2CPP runtime reports `is_mono=false` with a reason, without starting CE's collector.
+
+For isolated validation, set `CE_MCP_PIPE_NAME=ce_mcp_step6` when launching a separate CE instance and the test scripts. Build the native timer/DLL fixture with `tests/build_step6_fixture.cmd`; `tests/step6_integration.py` checks actual 3× elapsed time, true speedhack deactivation, DLL load log, Lua capture/error/timeout, non-Mono response and SDK discovery of 28 tools. Build the self-authored Mono target with `tests/build_step6_mono_fixture.ps1`, which extracts the official Mono 6.12 x64 MSI under `work` on E:; `tests/step6_mono_integration.py` verifies collector startup, assembly/class/method discovery, static field `Counter=123`, and instance fields `Health=456` and `Ratio=1.5`. The tests never attach to Tutorial or gtutorial. The existing main CE is hot-loaded without restarting or changing its attachment.
+
 ## Codex registration
 
 `D:\CodexData\config.toml` contains `[mcp_servers.cheat_engine]` launching the dedicated Python interpreter with the absolute server path. Restart Codex to load the newly registered server. CE must be running; the MCP server can start without CE and returns a clear connection error until CE is available.
