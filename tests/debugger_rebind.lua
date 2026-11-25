@@ -6,7 +6,9 @@
 -- the original module: it installed a watch without starting the new debugger.
 -- This rules out address/decoder errors as the cause of that lifecycle failure;
 -- native known-instruction/DR7 tests separately verify the real watch machinery.
-local path=[[E:/workspace/ce-mcp/ce/debugger.lua]]
+local here=assert(debug.getinfo(1,'S').source:match('^@(.+)[/\\][^/\\]+$'),
+  'debugger_rebind.lua must be loaded from a file')
+local path=here..'/../ce/debugger.lua'
 local function scenario()
   local current,owner,handle=202,101,2002
   local starts,detaches=0,0
@@ -60,7 +62,7 @@ local function scenario()
   return 'PASS stale owner, same process reuse, changed handle, switch, exit cleanup'
 end
 local ok,result=pcall(scenario)
-local f=assert(io.open([[E:/workspace/ce-mcp/work/rebind_contract.txt]],'w'))
+local f=assert(io.open(here..'/../work/rebind_contract.txt','w'))
 f:write(ok and result or tostring(result));f:close()
 assert(ok,result)
 return 1

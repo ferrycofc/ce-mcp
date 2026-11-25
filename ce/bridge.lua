@@ -2,11 +2,13 @@
 if CE_MCP_BRIDGE then return end
 local json = require('json')
 local MAX_FRAME = 1024 * 1024
-local tools = dofile([[E:\workspace\ce-mcp\ce\tools.lua]])
-local debugger = dofile([[E:\workspace\ce-mcp\ce\debugger.lua]])
-local injection = dofile([[E:\workspace\ce-mcp\ce\injection.lua]])
-local extended = dofile([[E:\workspace\ce-mcp\ce\extended.lua]])
-local table_tools = dofile([[E:\workspace\ce-mcp\ce\table.lua]])
+local here=assert(debug.getinfo(1,'S').source:match('^@(.+)[/\\][^/\\]+$'),
+  'bridge.lua must be loaded from a file')
+local tools = dofile(here..'/tools.lua')
+local debugger = dofile(here..'/debugger.lua')
+local injection = dofile(here..'/injection.lua')
+local extended = dofile(here..'/extended.lua')
+local table_tools = dofile(here..'/table.lua')
 local pipe_name = os.getenv('CE_MCP_PIPE_NAME') or 'ce_mcp'
 assert(pipe_name:match('^[%w_]+$'), 'Invalid CE_MCP_PIPE_NAME')
 local function invalid_json_path(v,path,seen)

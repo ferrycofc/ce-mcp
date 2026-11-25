@@ -2,3 +2,11 @@
 __pycache__/
 *.pyc
 work/
+findings.md
+progress.md
+task_plan.md
+*.CT
+*.ct
+*.cetrainer
+*.bak
+.pytest_cache/

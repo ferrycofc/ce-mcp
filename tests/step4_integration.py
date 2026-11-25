@@ -199,12 +199,13 @@ def direct_tests(t):
 
 
 async def mcp_tests(t):
-    parameters=StdioServerParameters(command=sys.executable,args=['-B',str(ROOT/'server/server.py')])
+    parameters=StdioServerParameters(command=sys.executable,args=['-B',str(ROOT/'server/server.py')],
+                                     env=dict(os.environ))
     async with stdio_client(parameters) as streams:
         async with ClientSession(*streams) as client:
             await client.initialize()
             names={tool.name for tool in (await client.list_tools()).tools}
-            assert len(names)==20 and {'read_pointer','write_pointer','add_pointer_to_table','address_info'}<=names,names
+            assert len(names)>=20 and {'read_pointer','write_pointer','add_pointer_to_table','address_info'}<=names,names
             async def call(method,**params):
                 result=await client.call_tool(method,params)
                 assert not result.is_error,result

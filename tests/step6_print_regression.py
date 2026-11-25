@@ -12,9 +12,9 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 probe=ROOT/'work/print_probe.lua'
 report=ROOT/'work/print_probe.txt'
-probe.write_text('''
+probe.write_text(f'''
 local info=debug.getinfo(_G.print,'S')
-local f=assert(io.open([[E:/workspace/ce-mcp/work/print_probe.txt]],'w'))
+local f=assert(io.open([[{report.as_posix()}]],'w'))
 local alias=debug.getinfo(_G.Print,'S')
 f:write(info.what,'|',info.source,'|',tostring(_G.print),
   '|',alias.what,'|',tostring(_G.Print==_G.print))
@@ -30,7 +30,7 @@ try:
     def identity():
         try:
             request('scan_first',value_type='4bytes',scan_type='exact',value='1',
-                    start_address="$dofile('E:/workspace/ce-mcp/work/print_probe.lua')",
+                    start_address=f"$dofile('{probe.as_posix()}')",
                     stop_address='0')
         except ToolError as exc:
             assert 'Invalid scan range' in str(exc),str(exc)

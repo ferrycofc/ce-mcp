@@ -1,6 +1,8 @@
 -- Scan state and typed values live in CE, not in Python.
 local M = {}
-local addressing=dofile([[E:\workspace\ce-mcp\ce\addressing.lua]])
+local here=assert(debug.getinfo(1,'S').source:match('^@(.+)[/\\][^/\\]+$'),
+  'tools.lua must be loaded from a file')
+local addressing=dofile(here..'/addressing.lua')
 local types = {byte=vtByte, ['2bytes']=vtWord, ['4bytes']=vtDword,
   ['8bytes']=vtQword, float=vtSingle, double=vtDouble, string=vtString}
 local widths = {byte=1, ['2bytes']=2, ['4bytes']=4, ['8bytes']=8}

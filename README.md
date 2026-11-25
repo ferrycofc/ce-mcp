@@ -1,189 +1,84 @@
-# Cheat Engine MCP
+# ce-mcp
 
-Windows / Cheat Engine 7.7 / official Python MCP SDK 2.3.0.
+把 Cheat Engine 7.7 的 Lua 功能接到本机 MCP 客户端。CE 内的 Lua 桥通过 Windows 命名管道 `\\.\pipe\ce_mcp` 接收请求；Python 服务以 stdio 向 MCP 客户端提供 33 个工具。地址、扫描结果、调试器和地址表都由 CE 管理。这个项目只在本机运行，不提供网络服务。
 
-## Installed layout
+项目用 CE 自带的 Tutorial、gtutorial 和自写测试程序开发。使用前请确认你有权操作目标进程；`run_lua`、内存写入、代码注入和脚本记录会在 CE 当前附加的进程中执行。
 
-- `ce/bridge.lua`: CE bridge. Background listener at `\\.\pipe\ce_mcp`, up to 16 pipe instances; each accepted client gets a worker thread. CE calls execute through `synchronize` on the main thread. `CE_MCP_PIPE_NAME` selects a separate pipe for isolated test instances.
-- `ce/autorun.lua`: installed as `C:\Program Files\Cheat Engine\autorun\ce_mcp.lua`; loads the bridge from this project. New CE starts load the current bridge. Loading twice is guarded; the active session can be hot-loaded without restarting CE.
-- `server/server.py`: MCP stdio server. Each tool call creates its own pipe connection. CE attachment is global to CE, so another client can change the currently attached process.
-- `.venv`: dedicated Python environment.
+## 需要什么
 
-## Tools
+- Windows、Cheat Engine 7.7（含 `celua.txt` 和 Lua autorun）、Python 3.12。当前依赖版本见 `requirements.txt`。
+- 一个支持**本地 stdio MCP** 的客户端。下面给出 Codex 配置示例。
+- 只有运行原生测试夹具时才需要 Visual Studio C++ 构建工具（含 x86/x64 编译器和 MASM）；Mono 测试另需下载 Mono 安装包。
 
-| Tool | Arguments | Result |
+## 三步安装
+
+1. **安装 Python 依赖。** 在 PowerShell 里进入克隆后的仓库目录：
+
+   ```powershell
+   py -3.12 -m venv .venv
+   .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+   ```
+
+2. **安装 CE 启动脚本。** 把参数换成你自己的 CE 安装目录；若目录在 Program Files，PowerShell 需要相应写入权限。
+
+   ```powershell
+   .\install.ps1 -CheatEngineDir '<你的 CE 安装目录>'
+   ```
+
+   安装器把 `ce/autorun.lua` 复制成 CE 的 `autorun/ce_mcp.lua`，并在同一目录写入只含本机仓库路径的 `ce_mcp_path.txt`。启动 CE 时，加载器读这个文件找到仓库的 `ce/bridge.lua`；其它 Lua 模块按自身文件位置加载。移动仓库后重新运行安装器。安装后启动 CE，Lua 桥会自动加载；已有 CE 进程要重新加载启动脚本时，可在 CE 的 Lua Engine 执行 `dofile([[<CE 安装目录>/autorun/ce_mcp.lua]])`，前提是该进程里尚未加载桥。
+
+3. **在本地 MCP 客户端配置 Python 服务。** 例如在 [Codex 的 MCP 配置](https://developers.openai.com/learn/docs-mcp)中加入下面的 TOML，把示例路径全部换成仓库的实际绝对路径（TOML 单引号保留 Windows 反斜杠）：
+
+   ```toml
+   [mcp_servers.cheat_engine]
+   command = 'X:\path\to\ce-mcp\.venv\Scripts\python.exe'
+   args = ['-B', 'X:\path\to\ce-mcp\server\server.py']
+   startup_timeout_sec = 30
+   tool_timeout_sec = 180
+   ```
+
+   重新连接客户端后调用 `ce_status`，应看到 CE 版本和当前附加的进程。Python 服务可以先启动，CE 未运行时会返回管道不可用错误。
+
+**ChatGPT 网页版：** 当前仓库只有本地 stdio 服务，不能直接把 Python 文件或 `\\.\pipe\ce_mcp` 填成 ChatGPT 的 Server URL。官方的 [自定义 MCP 连接](https://developers.openai.com/api/docs/guides/custom-mcp-server)使用远程 SSE/streaming HTTP URL，或者具备相应权限的 [Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)。仓库尚未实现这两种部署方式，也不是已发布的 ChatGPT 插件。
+
+## 工具清单（33 个）
+
+| 分组 | 工具 | 用途 |
 | --- | --- | --- |
-| `ce_status` | none | CE version, attached PID and process name (name omitted when unattached) |
-| `list_processes` | optional `filter` | PID/name list, case-insensitive substring match |
-| `attach` | exactly one of `name`, `pid` | Attached process status; exact executable name, case-insensitive; duplicate matches require PID |
-| `read_memory` | `address` string, `size` 1..65536 | Resolved hex address, size, space-separated hex bytes, printable ASCII; nonprintable bytes become `.` |
-| `auto_assemble` | `name`, full `script` on enable; `enable=false` to disable | Runs named `[ENABLE]`/`[DISABLE]` scripts and retains CE's disable state for restoration |
-| `aob_scan` | hex-byte/`??` `pattern`, optional `module` | All matching addresses with module+offset metadata |
-| `injection_template` | `address`, optional symbol `name` | Module-unique AOB script, complete stolen instructions, 5-byte near jump, return address and exact DISABLE bytes |
-| `compare_structures` | 2..16 `addresses`, `length`, optional `stride`/`types` | Per-offset integer, float and pointer interpretations with differing fields |
+| 进程和内存（4） | `ce_status`, `list_processes`, `attach`, `read_memory` | 查看状态、列进程、附加、读原始字节 |
+| 扫描和值（7） | `scan_first`, `scan_next`, `scan_results`, `read_value`, `write_value`, `add_to_table`, `set_frozen` | 首次/后续扫描、翻页、按类型读写、添加和锁定记录 |
+| 调试器（5） | `find_what_writes`, `find_what_accesses`, `disassemble`, `nop_instruction`, `restore_instruction` | 硬件断点、反汇编、NOP 与恢复 |
+| 指针（4） | `read_pointer`, `write_pointer`, `add_pointer_to_table`, `address_info` | 指针链读写与内存区域信息 |
+| 注入和分析（4） | `auto_assemble`, `aob_scan`, `injection_template`, `compare_structures` | AA 脚本、特征码、注入模板、结构对比 |
+| CE 扩展（4） | `run_lua`, `speedhack`, `inject_dll`, `mono` | Lua、变速、DLL 注入、Mono 信息 |
+| 地址表（5） | `list_table`, `add_script_record`, `set_record_active`, `save_table`, `load_table` | 查看/激活记录，保存或载入 `.CT` |
 
-Addresses accept CE expressions, for example `Tutorial-x86_64.exe`, `Tutorial-x86_64.exe+100`, or `0x100000000`. An unreadable or incomplete range returns an error instead of partial data.
+`scan_first` 会替换上一轮扫描，`scan_next` 接着当前扫描结果筛选。指针工具的偏移输入顺序是基址到最终地址；`list_table` 同时返回这个顺序和 CE 界面顺序。地址表记录 ID 以当前表为准，载入 `.CT` 后应重新查询。`load_table(..., merge=False)` 替换地址表；`merge=True` 追加。CE 会按自身规则处理 `.CT` 中的表脚本。
 
-## Protocol
+## 跑测试
 
-Little-endian unsigned 32-bit UTF-8 byte length, followed by JSON (maximum 1 MiB). Requests: `{"method":"ce_status","params":{}}`. Responses: `{"ok":true,"result":{...}}` or `{"ok":false,"error":"..."}`. Connections support repeated requests. Idle CE client connections expire after 15 seconds; Python calls have a 20-second I/O deadline. `auto_assemble` executes trusted CE Auto Assembler scripts, including embedded Lua. This local pipe assumes trusted clients. Broad AOB results can exceed 1 MiB; narrow the module or use a longer pattern.
-
-## Run and test
+测试使用独立 CE 实例和仓库自带的目标程序。先从仓库根目录编译原生夹具（所有输出在 `work/`）；`vswhere` 会定位 Visual Studio，不依赖固定安装路径：
 
 ```powershell
-& E:\workspace\ce-mcp\.venv\Scripts\python.exe -B E:\workspace\ce-mcp\server\server.py
-# With CE and Tutorial-x86_64.exe running:
-& E:\workspace\ce-mcp\.venv\Scripts\python.exe -B E:\workspace\ce-mcp\tests\integration.py
+.\tests\build_native_fixtures.ps1
 ```
 
-Dependencies are pinned in `requirements.txt`. When reinstalling, set TEMP/TMP and package caches to E: before running package tools. Do not run builds or packaging on C:.
-
-## Step 2: scans, typed values and address table
-
-`ce/tools.lua` implements the following seven additional tools:
-
-| Tool | Main arguments | Behavior |
-| --- | --- | --- |
-| `scan_first` | `value_type`, `scan_type`, optional `value`, `value2`, `start_address`, `stop_address` | Replaces the previous scan; default range is the whole target process |
-| `scan_next` | `scan_type`, optional `value`, `value2` | Refines the CE-owned previous scan and retains its value type |
-| `scan_results` | `start=0`, `count=20` | Pages current results; count is 1..200 |
-| `read_value` | `address`, `value_type`, optional string `length=256` | Returns a typed value as a string |
-| `write_value` | `address`, `value_type`, `value` | Writes and reads back the typed value |
-| `add_to_table` | `address`, `value_type`, `description`, `frozen=false`, optional `frozen_value`, `length=256` | Creates a visible CE memory record and returns its stable `id` |
-| `set_frozen` | `id`, `frozen`, optional `value` | Changes the freeze state/value of a bridge-created record |
-
-Types: `byte`, `2bytes`, `4bytes`, `8bytes`, `float`, `double`, `string`. Pass decimal values as strings, particularly 64-bit integers and floating point scan inputs where `100` and `100.0` have different CE rounding precision. Integer reads return unsigned decimal strings; writes also accept negative numbers within the corresponding signed range. Strings use UTF-8 and NUL termination, at most 4096 bytes. String writes require enough space for the value plus its NUL; address-table string length is the maximum byte length.
-
-First scan modes: `exact`, `bigger`, `smaller`, `between` (value/value2), `unknown`. Next modes: `exact`, `bigger`, `smaller`, `between`, `increased`, `decreased`, `changed`, `unchanged`, `increased_by`, `decreased_by`. Changes compare against the immediately preceding scan. Float and double scans use CE's `rtRounded`, so `100` matches `100.0` and `100.25`, while `100.0` uses a narrower range. Scan address bounds follow CE's native range rules.
-
-CE API boundaries are explicit: **unknown is an initial scan only**; it captures regions rather than enumerating matches. Its response has `snapshot=true`, `total_kind="bytes"`, captured byte count in `total`, and an empty address list. Use `scan_next` to obtain matching addresses. String scanning supports `exact` only; other string scan modes return an error. These restrictions come from the installed CE scan API, rather than silently substituting other comparisons.
-
-Ordinary scan responses contain `total` (all matches), `total_kind="addresses"`, `start` (zero-based), `value_type`, and `results` (first 20 for scan operations). Each result contains `index`, hex `address`, and current `value` reread from the target. If an address becomes unreadable it carries an `error`. Pagination does not cache old values.
-
-One scan exists per CE bridge. Concurrent scan mutations are rejected while scanning; the CE main thread remains available while a pipe worker waits for completion. Scan timeout is 120 seconds; Python allows 150 seconds for scan requests, and the Codex MCP timeout is 180 seconds. A new MCP attachment clears the previous scan and unfreezes bridge-created memory records, preserving the records in CE's table. Bridge records can only be frozen when their original PID is attached. Attaching the already attached PID retains the scan. Other CE table entries are untouched. `frozen_value` is applied when `frozen=true`; omitting it freezes the current value. `set_frozen(..., frozen=true, value=...)` changes the locked value.
-
-### Step 2 validation — 2026-11-25
+在一个 PowerShell 窗口启动**独立** CE，给它指定测试管道。例如测试第七步：
 
 ```powershell
-& E:\workspace\ce-mcp\.venv\Scripts\python.exe -B E:\workspace\ce-mcp\tests\step2_integration.py
+$env:CE_MCP_PIPE_NAME = 'ce_mcp_step7'
+Start-Process -FilePath '<CE 安装目录>\cheatengine-x86_64.exe'
+.\.venv\Scripts\python.exe -B .\tests\step7_integration.py
 ```
 
-The fixture starts `tests/target.py` as an independent process with its own allocated page. It verifies all seven scan/read/write types, all supported numeric first/next modes, unknown snapshots and refinements, full uint64 precision, signed writes and range errors, CE float rounding precision, first-20/paged/empty/live results, scan replacement, all seven types of freezing with target-side overwrite/read verification, unlocking, whole-process scanning without bounds, concurrency of status calls, and expected errors. A real official SDK client initializes the stdio server, verifies all 11 tool schemas, and calls all 11 tools with content assertions. All memory writes go exclusively to the disposable target, not Tutorial. CE was restarted to prove autorun loads both modules. The original Tutorial process remained alive; no tutorial controls, values, or stage transitions were changed. Scanner storage uses the user's existing E:\CEBUFFER setting.
+其它测试脚本位于 `tests/`。`step5_integration.py` 要求 `ce_mcp_step5`，`step6_integration.py` 和 `step6_mono_integration.py` 要求 `ce_mcp_step6`，`step6_print_regression.py` 要求以 `ce_mcp_printfix` 开头的管道；切换管道时为该测试启动另一份 CE。`step2_integration.py`、`step3_integration.py` 和 `step4_integration.py` 使用各自的自写目标。`integration.py` 会附加 CE 官方 Tutorial，默认测试流程无需运行。Mono 夹具可用 `tests/build_step6_mono_fixture.ps1` 另行构建，它会下载 Mono 安装包到 `work/`。
 
-## Step 3: debugger
+## 已知限制
 
-`ce/debugger.lua` adds five tools (16 tools in total):
+- 仅验证了 Windows 上的 CE 7.7 和 Python 3.12。CE 的 Lua API 以安装包中的 `celua.txt` 为准；其它版本可能有差异。
+- 一个 CE 实例同一时间只保留一轮扫描、一个硬件监视任务。硬件断点数量受 CPU/调试器限制；写入指令地址由停住位置向前解码推断，极少数不明确的指令不会被当成确定命中。
+- `run_lua` 的超时可以中断 Lua 指令循环，但不能强行中断正在阻塞的 CE 原生调用。管道单条响应上限为 1 MiB。
+- 命名管道和 MCP 服务没有用户认证；仅在可信的本机环境运行，不要把管道或未加防护的桥直接暴露到公网。
+- `save_table` 和 `load_table` 使用 CE 原生 `.CT` 语义；载入来自别人的表前应先检查其中的 Lua/AA 脚本。
 
-| Tool | Arguments | Result |
-| --- | --- | --- |
-| `find_what_writes` | `address`, `seconds=5`, `size=1` | Hardware write watch with per-instruction hit counts and first-hit registers |
-| `find_what_accesses` | same | Hardware read/write watch |
-| `disassemble` | `address`, `count=10` (1..200) | Sequential instruction addresses, raw bytes, instruction text, module offsets and sizes |
-| `nop_instruction` | `address` at an instruction start | Replaces exactly one instruction with same-length `90` bytes and saves its original bytes |
-| `restore_instruction` | original `address` | Verifies the NOP bytes and restores the saved original bytes |
-
-Watches accept 0.1..120 seconds and hardware sizes 1/2/4, plus 8 for x64; the address must be aligned to size. The bridge starts the Windows debugger if none is active, otherwise uses the current CE debugger. It explicitly requests `bpmDebugRegister` with `bptWrite` or `bptAccess`; no software/exception-breakpoint fallback. One watch runs at a time. Requests reject overlapping pre-existing breakpoints, attaching another process, and NOP edits during a watch. Status includes a `debugger` object with `debugging`, `paused`, `monitoring`, `watch_address` (when active) and `saved_patches` for the current PID. A completed watch removes its own full breakpoint identity and leaves other callbacks intact; an independent CE timer performs expiry cleanup even if the pipe client disconnects. Callback errors are recorded and execution is continued. Debugger attachment remains active after a watch.
-
-Watch responses contain `instructions`, `total_hits`, `unattributed_hits`, `errors`, elapsed time, completion `reason` and `breakpoint_removed`. Each instruction has a hexadecimal `address`, `symbol` (`module+offset`), `module`, `module_offset`, `bytes`, `instruction`, `size`, `hit_count`, first-hit hexadecimal `registers`, and `stopped_ip`. Dynamically allocated/JIT code without a containing module uses a raw address rather than inventing a module name. All unique instruction addresses are collected; responses beyond the pipe's 1 MiB limit return an explicit error recommending a shorter watch.
-
-**Post-instruction attribution:** x86/x64 hardware data breakpoints report IP after the memory instruction. The bridge uses CE's documented `getPreviousOpcode(stopped_ip)`, decodes that candidate and checks `candidate + size == stopped_ip`. The saved register context is the first hit's **post-execution** context; IP is retained separately from the inferred writer/accessor address. CE documents backwards decoding as an estimate: ambiguous x86 encodings and control-flow/string instructions can defeat this heuristic. Responses label it `attribution="ce_previous_opcode"`; failed attribution increments `unattributed_hits` and records an error rather than reporting the next instruction as a proven writer.
-
-NOP operations pause a running target for the patch and readback, then resume it; an already paused target stays paused. Saved originals are keyed by PID/address in the current CE Lua session. Overlapping patches are rejected. Restore refuses to clobber a subsequent external edit. Restore patches **before restarting CE**, because the session's backups are in memory. Return values include original/patched hex bytes, size, process and restored state. The tested native RX code page retained its original protection.
-
-### Debugger test fixture
-
-```powershell
-& E:\workspace\ce-mcp\tests\build_debug_fixture.ps1
-& E:\workspace\ce-mcp\.venv\Scripts\python.exe -B E:\workspace\ce-mcp\tests\step3_integration.py
-```
-
-The build requires the installed Visual Studio 2022 Community x64 C/MASM tools. All build intermediates, executable, TEMP/TMP and compiler outputs are under `E:\workspace\ce-mcp\work`; no builds run on C:. `debug_target.c` + `debug_target.asm` provide independent known writers/readers in a real PE module: `89 11` (`mov [rcx],edx`) and `8B 01` (`mov eax,[rcx]`), each followed by `ret`. Tests check exact module offsets, stopped-IP correction (+2), first registers, write/access counts, zero/repeated watches, client disconnect, process exit, active-watch rejection of conflicting operations, NOP execution behavior, original-byte restoration and edit conflicts. Independent Windows `GetThreadContext` checks hardware debug-register enable bits during and after monitoring; this matters because CE's `debug_getBreakpointList` includes inactive retired descriptors. The official SDK stdio client verifies 16 schemas and all five debugger tools with actual hits/patches. These tests never attach, debug or modify Tutorial.
-
-## Step 4: pointers and address information
-
-Four additional tools bring the total to 20:
-
-| Tool | Arguments | Result |
-| --- | --- | --- |
-| `read_pointer` | `base`, `offsets`, `value_type="4bytes"`, string `length=256` | Each dereference and the final typed value |
-| `write_pointer` | `base`, `offsets`, `value_type`, `value` | Same trace, with a write/readback at the final address |
-| `add_pointer_to_table` | `base`, `offsets`, `value_type`, `description=""`, optional `value`, `frozen=false`, string `length=256` | A native CE pointer record, with stable ID and live resolved address |
-| `address_info` | `address` | Static module information plus Windows region attributes/classification |
-
-`base` accepts CE expressions such as `game.exe+1234`. Offsets are **base-to-leaf**: for each offset, read a pointer at the current address, then add that offset. Integer inputs are decimal; string inputs are hexadecimal with optional sign and `0x` prefix. For example, `offsets=["20","-10","38"]` means:
-
-```text
-a1 = pointer_at(base) + 0x20
-a2 = pointer_at(a1)   - 0x10
-final = pointer_at(a2) + 0x38
-value = typed_read(final)
-```
-
-The API accepts up to 64 signed 32-bit offsets. `offsets=[]` performs no dereference and reads/writes `base` directly; `[0]` dereferences once. A native pointer record requires at least one offset. A null/unreadable link returns an error identifying its layer and pointer-slot address, without writing through the failed chain. Pointer reads use QWORDs for a 64-bit target and DWORDs for a 32-bit target, independently of CE/Python host width and the final value's type.
-
-Trace results contain `base`, `base_address`, `pointer_size`, `offset_order="base_to_leaf"`, normalized `offsets`, `layers`, final `address`, `value_type` and `value`. Each layer provides `index` (1-based), `address` (pointer slot), `pointer_value`, `offset` and `next_address`. Values retain the existing typed-memory string representation and precision rules. The chain is a sequential runtime observation, not a frozen snapshot of concurrently changing target memory.
-
-**CE record/UI order is reversed:** the example above becomes native `Offset[0..2] = [0x38,-0x10,0x20]`, with actual `OffsetText = ["38","-10","20"]`. The bridge preserves the original base expression in `MemoryRecord.Address`, sets `OffsetCount` and native `Offset[]`, and verifies `CurrentAddress` against the trace before applying an optional value or freeze. It never substitutes a fixed leaf address. Records return `is_pointer`, `offset_count`, API `offsets`, `ce_offsets`, actual `ce_offset_texts`, and `resolved_address`. Existing `set_frozen` works on their returned IDs. With `value` omitted, `frozen=true` freezes the current value; with `value` supplied, it is written even when not frozen. Strings use the supplied record length. Attachment changes unfreeze pointer records through the same lifecycle as ordinary records.
-
-`address_info` returns `is_static`, `is_dynamic`, `classification` and `region`. A module address also includes `symbol` (`module+hex-offset`), `module`, `module_base`, `module_offset`, and `module_path`. Classifications distinguish `static_module`, `dynamic_private`, `mapped`, `unlisted_image`, `reserved`, and `free`. MEM_PRIVATE may be heap, stack or VirtualAlloc memory; region metadata alone cannot establish heap provenance. Region details include base/allocation base, size as decimal and hex strings, raw state/type codes and names, protection codes/names, allocation protection, readable/writable/executable, guard, copy-on-write, no-cache and write-combine flags. Guarded regions are not reported as immediately readable/writable.
-
-Every enumerated scan result now includes `is_static`; module-backed results additionally have `symbol`, `module`, and `module_offset`. This applies to the first 20 results of scan_first/scan_next and to scan_results pages, using a fresh module list per page. Unknown-initial snapshots still have no address entries until refinement.
-
-### Pointer validation — 2026-11-25
-
-```powershell
-& E:\workspace\ce-mcp\tests\build_pointer_fixture.ps1
-& E:\workspace\ce-mcp\.venv\Scripts\python.exe -B E:\workspace\ce-mcp\tests\step4_integration.py
-```
-
-The helper builds x64 and x86 versions of `pointer_target.c` using installed Visual Studio tools, exclusively under `E:\workspace\ce-mcp\work\pointer-fixture`. The native fixture supplies an independently known three-layer chain with asymmetric/negative offsets, high x64 heap addresses and poisoned DWORDs after x86 pointer slots. Both versions verify all seven final types, exact trace addresses/values, native CE offset order and texts, optional initial setting, lock/unlock, and retargeting a middle link while a native pointer record follows/freezes the new leaf. Module, heap/private, reserved, guarded, mapped and free-region reports are checked against an independent OS VirtualQueryEx call. Static and dynamic scan metadata are checked for first, next and paged results. Real SDK clients discover 20 schemas and exercise all four new tools for each architecture. Fixtures never attach, write, debug or send input to Tutorial.
-
-## Step 5: code injection
-
-`auto_assemble(name, script)` enables a CE script with both `[ENABLE]` and `[DISABLE]` sections. CE's returned `disableInfo` stays in the Lua bridge under that name; call `auto_assemble(name, enable=false)` to run DISABLE and release its allocations. The bridge refuses an MCP process switch while a live process has an enabled script. An exited process has no bytes to restore, so its saved script is discarded on the next switch.
-
-`aob_scan` accepts space-separated hex bytes and `??` wildcards. With `module`, it keeps only complete matches inside that module; without it, it returns matches from the process. Results include `symbol` and `module_offset` when the address belongs to a module.
-
-`injection_template` requires a module instruction address. It extends whole instructions until at least 5 bytes are available, then extends a wildcard-aware AOB until it is unique in that module. The generated script allocates `newmem` near the site, forces a 5-byte `jmp long` on x64, reassembles original instructions in the cave (so relative operands keep their destinations), jumps back after the overwritten span, and restores the exact original bytes in DISABLE. Edit the marked custom-code line before enabling it. The `assert` in the script rejects changed original bytes.
-
-`compare_structures` reads 2..16 blocks and compares every byte offset by default (`stride=1`); set `stride=4` to inspect 4-byte boundaries. Each row includes 4-byte integer, float and pointer interpretations by default, raw bytes, and a `different` marker. These are sequential reads of a running process, not a frozen snapshot.
-
-The isolated step 5 test uses `CE_MCP_PIPE_NAME=ce_mcp_step5` for both a separate CE instance and the MCP server. Its native fixture demonstrates a 7-byte overwrite with an actual 5-byte near jump, changes a function result by +2 while enabled, and checks byte-for-byte restoration after disabling. The older scan and debugger suites also pass against that isolated instance. No test attaches to Tutorial.
-
-## Step 6: Lua, speedhack, DLL and Mono
-
-`run_lua(code, timeout=3)` executes a Lua chunk in CE's main Lua state. It returns captured `print` lines, up to 100 return values, elapsed time, and error/traceback details. A Lua instruction hook interrupts computation after 0.05–30 seconds; a blocking native CE call cannot be preempted until that call returns. Returned tables are converted to JSON-safe arrays/objects, with cycles and deep values marked. A Lua error is reported as `ok=false` in the tool result.
-
-`run_lua` installs its print capture only in that chunk's environment. It leaves CE's global `print` intact, so subsequent scripts in CE's Lua Engine still write to its output pane. The focused `tests/step6_print_regression.py` checks this across success, syntax error, runtime error and timeout.
-
-`speedhack(enabled, speed=1)` uses CE's `speedhack_setSpeed` and `speedhack_getSpeed`; disabling also clears CE's speedhack checkbox. Its result reports the active checkbox state and current multiplier. `inject_dll(path)` accepts an absolute local DLL path, calls CE's `injectDLL`, then returns its module name, path and base address from `enumModules`.
-
-`mono(action='status', namespace='', class_name=None, method_name=None, instance_address=None)` uses CE's installed Mono extension. Actions are `status`, `assemblies`, `class`, `methods`, and `fields`. Method lookup optionally filters by exact name. Fields return type, offset, flags and address; primitive static values and primitive instance values (when given an object address) are read. A process without a Mono/IL2CPP runtime reports `is_mono=false` with a reason, without starting CE's collector.
-
-For isolated validation, set `CE_MCP_PIPE_NAME=ce_mcp_step6` when launching a separate CE instance and the test scripts. Build the native timer/DLL fixture with `tests/build_step6_fixture.cmd`; `tests/step6_integration.py` checks actual 3× elapsed time, true speedhack deactivation, DLL load log, Lua capture/error/timeout, non-Mono response and SDK discovery of 28 tools. Build the self-authored Mono target with `tests/build_step6_mono_fixture.ps1`, which extracts the official Mono 6.12 x64 MSI under `work` on E:; `tests/step6_mono_integration.py` verifies collector startup, assembly/class/method discovery, static field `Counter=123`, and instance fields `Health=456` and `Ratio=1.5`. The tests never attach to Tutorial or gtutorial. The existing main CE is hot-loaded without restarting or changing its attachment.
-
-## Step 7: CE address tables
-
-Five tools expose CE's native address list and `.CT` files (33 tools in total):
-
-| Tool | Purpose |
-| --- | --- |
-| `list_table()` | Enumerate all records, including nested records, with IDs, descriptions, addresses, types, current values, active state, and script/pointer flags |
-| `add_script_record(description, script)` | Add an inactive Auto Assembler record containing `[ENABLE]` and `[DISABLE]` |
-| `set_record_active(id, active)` | Freeze/unfreeze a numeric or pointer record; run ENABLE/DISABLE on a script record |
-| `save_table(path)` | Save the current table to an absolute `.CT` path |
-| `load_table(path, merge=False)` | Replace the current table from `.CT`, or append its records when `merge=True` |
-
-`list_table` reports pointer offsets in base-to-leaf order as `offsets` and the CE/UI order as `ce_offsets`; `parent_id` identifies nested entries. An unreadable value appears as CE's `??`. Script and group entries have no numeric value. IDs refer to the current table and should be refreshed after a load. Loading a table uses CE's normal `.CT` loading behavior, including any embedded table Lua.
-
-The isolated `tests/step7_integration.py` uses `CE_MCP_PIPE_NAME=ce_mcp_step7` and the self-authored x64 pointer fixture. It verifies native AA record enable/disable with original-value restoration, direct and pointer-record freezing, nested-record enumeration, `.CT` save/load and merge, and real MCP SDK discovery of 33 tools. The existing CE was hot-loaded in place; its gtutorial attachment and debugger state were unchanged. No test operated on gtutorial.
-
-## Codex registration
-
-`D:\CodexData\config.toml` contains `[mcp_servers.cheat_engine]` launching the dedicated Python interpreter with the absolute server path. Restart Codex to load the newly registered server. CE must be running; the MCP server can start without CE and returns a clear connection error until CE is available.
-
-## Validation — 2026-11-25
-
-Verified installed CE APIs in `C:\Program Files\Cheat Engine\celua.txt`: `createPipe`, `acceptConnection(true)`, pipe framing methods, `createThread`, `synchronize`, `getCEVersion`, `getProcesslist`, `getOpenedProcessID`, `openProcess`, `getAddressSafe`, `readBytes`. JSON uses CE's bundled `require('json')`.
-
-Real CE restart successfully loaded autorun; initial status reported 7.7/PID 0. Attached existing Tutorial PID 64016 by name and PID, read DOS header at `0x100000000` with `4D 5A` / `MZ`, verified symbol and numeric addresses and 64 KiB read. Passed 32 requests across 8 concurrent clients, idle-client isolation, fragmented framing, expected error cases, and real MCP stdio initialization/tool discovery/all four tool calls with content assertions. Expected unreadable-memory errors reach the MCP client, and subsequent calls succeed. Tutorial remains attached. Codex's reload of the new registration requires restarting the app and was not performed during this chat.
+MIT 许可证见 [LICENSE](LICENSE)。

@@ -1,6 +1,8 @@
 -- CE 7.7 APIs: celua.txt and the installed autorun/monoscript.lua.
 local M={}
-local A=dofile([[E:/workspace/ce-mcp/ce/addressing.lua]])
+local here=assert(debug.getinfo(1,'S').source:match('^@(.+)[/\\][^/\\]+$'),
+  'extended.lua must be loaded from a file')
+local A=dofile(here..'/addressing.lua')
 local function array() return setmetatable({}, {isArray=true}) end
 local function attached()
   local pid=getOpenedProcessID()

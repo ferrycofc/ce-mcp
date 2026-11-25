@@ -1,6 +1,8 @@
 -- CE 7.7 celua.txt: autoAssemble/disableInfo, AOBScan, Disassembler and typed reads.
 local M={}
-local A=dofile([[E:/workspace/ce-mcp/ce/addressing.lua]])
+local here=assert(debug.getinfo(1,'S').source:match('^@(.+)[/\\][^/\\]+$'),
+  'injection.lua must be loaded from a file')
+local A=dofile(here..'/addressing.lua')
 local scripts={}
 local function arr() return setmetatable({}, {isArray=true}) end
 local function integer(n) return type(n)=='number' and n==math.floor(n) end

@@ -1,5 +1,5 @@
 $ErrorActionPreference = 'Stop'
-$root = 'E:\workspace\ce-mcp'
+$root = Split-Path $PSScriptRoot -Parent
 $work = Join-Path $root 'work'
 $env:TEMP = Join-Path $work 'temp'
 $env:TMP = $env:TEMP
