@@ -406,5 +406,35 @@ def mono(action: Literal['status','assemblies','class','methods','fields'] = 'st
     return request('mono',**params)
 
 
+@mcp.tool()
+def list_table() -> dict:
+    """List every CE address-table record, including pointer chains and script records."""
+    return request('list_table')
+
+
+@mcp.tool()
+def add_script_record(description: str, script: str) -> dict:
+    """Add a native CE Auto Assembler record with [ENABLE] and [DISABLE] sections."""
+    return request('add_script_record', description=description, script=script)
+
+
+@mcp.tool()
+def set_record_active(id: int, active: bool) -> dict:
+    """Activate/deactivate a record by ID: freeze a value or run script ENABLE/DISABLE."""
+    return request('set_record_active', id=id, active=active)
+
+
+@mcp.tool()
+def save_table(path: str) -> dict:
+    """Save the current CE address table to an absolute .CT file path."""
+    return request('save_table', path=path)
+
+
+@mcp.tool()
+def load_table(path: str, merge: bool = False) -> dict:
+    """Load an absolute .CT file, replacing the table unless merge is true."""
+    return request('load_table', path=path, merge=merge)
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")

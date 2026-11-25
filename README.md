@@ -162,6 +162,22 @@ The isolated step 5 test uses `CE_MCP_PIPE_NAME=ce_mcp_step5` for both a separat
 
 For isolated validation, set `CE_MCP_PIPE_NAME=ce_mcp_step6` when launching a separate CE instance and the test scripts. Build the native timer/DLL fixture with `tests/build_step6_fixture.cmd`; `tests/step6_integration.py` checks actual 3× elapsed time, true speedhack deactivation, DLL load log, Lua capture/error/timeout, non-Mono response and SDK discovery of 28 tools. Build the self-authored Mono target with `tests/build_step6_mono_fixture.ps1`, which extracts the official Mono 6.12 x64 MSI under `work` on E:; `tests/step6_mono_integration.py` verifies collector startup, assembly/class/method discovery, static field `Counter=123`, and instance fields `Health=456` and `Ratio=1.5`. The tests never attach to Tutorial or gtutorial. The existing main CE is hot-loaded without restarting or changing its attachment.
 
+## Step 7: CE address tables
+
+Five tools expose CE's native address list and `.CT` files (33 tools in total):
+
+| Tool | Purpose |
+| --- | --- |
+| `list_table()` | Enumerate all records, including nested records, with IDs, descriptions, addresses, types, current values, active state, and script/pointer flags |
+| `add_script_record(description, script)` | Add an inactive Auto Assembler record containing `[ENABLE]` and `[DISABLE]` |
+| `set_record_active(id, active)` | Freeze/unfreeze a numeric or pointer record; run ENABLE/DISABLE on a script record |
+| `save_table(path)` | Save the current table to an absolute `.CT` path |
+| `load_table(path, merge=False)` | Replace the current table from `.CT`, or append its records when `merge=True` |
+
+`list_table` reports pointer offsets in base-to-leaf order as `offsets` and the CE/UI order as `ce_offsets`; `parent_id` identifies nested entries. An unreadable value appears as CE's `??`. Script and group entries have no numeric value. IDs refer to the current table and should be refreshed after a load. Loading a table uses CE's normal `.CT` loading behavior, including any embedded table Lua.
+
+The isolated `tests/step7_integration.py` uses `CE_MCP_PIPE_NAME=ce_mcp_step7` and the self-authored x64 pointer fixture. It verifies native AA record enable/disable with original-value restoration, direct and pointer-record freezing, nested-record enumeration, `.CT` save/load and merge, and real MCP SDK discovery of 33 tools. The existing CE was hot-loaded in place; its gtutorial attachment and debugger state were unchanged. No test operated on gtutorial.
+
 ## Codex registration
 
 `D:\CodexData\config.toml` contains `[mcp_servers.cheat_engine]` launching the dedicated Python interpreter with the absolute server path. Restart Codex to load the newly registered server. CE must be running; the MCP server can start without CE and returns a clear connection error until CE is available.
