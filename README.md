@@ -6,20 +6,34 @@
 
 ## 需要什么
 
-- Windows、Cheat Engine 7.7（含 `celua.txt` 和 Lua autorun）、Python 3.12。当前依赖版本见 `requirements.txt`。
+- Windows、Git、Cheat Engine 7.7（含 `celua.txt` 和 Lua autorun）、Python 3.12。当前依赖版本见 `requirements.txt`。
 - 一个支持**本地 stdio MCP** 的客户端。下面给出 Codex 配置示例。
 - 只有运行原生测试夹具时才需要 Visual Studio C++ 构建工具（含 x86/x64 编译器和 MASM）；Mono 测试另需下载 Mono 安装包。
 
 ## 三步安装
 
-1. **安装 Python 依赖。** 在 PowerShell 里进入克隆后的仓库目录：
+1. **克隆仓库并安装 Python 依赖。** 在 PowerShell 中进入你想存放项目的目录，然后运行：
 
    ```powershell
+   git clone https://github.com/ferrycofc/ce-mcp.git
+   Set-Location .\ce-mcp
+   py -3.12 --version
    py -3.12 -m venv .venv
    .\.venv\Scripts\python.exe -m pip install -r requirements.txt
    ```
 
+   如果 `py -3.12` 提示找不到解释器，先运行 `py -0p` 查看已安装的 Python；没有 3.12 就从 [Python 官网](https://www.python.org/downloads/windows/)安装，再打开一个新的 PowerShell 窗口重试。如果连 `py` 命令也找不到，但已安装 Python 3.12，可用解释器的实际路径代替 `py -3.12`：
+
+   ```powershell
+   & '<Python 3.12 安装目录>\python.exe' --version
+   & '<Python 3.12 安装目录>\python.exe' -m venv .venv
+   ```
+
+   确认第一条命令显示的是 3.12，再继续运行上面的 `pip install` 命令。
+
 2. **安装 CE 启动脚本。** 把参数换成你自己的 CE 安装目录；若目录在 Program Files，PowerShell 需要相应写入权限。
+
+   **先检查 CE 的 `autorun` 文件夹：安装脚本会直接覆盖已有的 `ce_mcp.lua` 和 `ce_mcp_path.txt`。** 如果里面有你要保留的内容，先备份这两个文件。
 
    ```powershell
    .\install.ps1 -CheatEngineDir '<你的 CE 安装目录>'
@@ -27,7 +41,35 @@
 
    安装器把 `ce/autorun.lua` 复制成 CE 的 `autorun/ce_mcp.lua`，并在同一目录写入只含本机仓库路径的 `ce_mcp_path.txt`。启动 CE 时，加载器读这个文件找到仓库的 `ce/bridge.lua`；其它 Lua 模块按自身文件位置加载。移动仓库后重新运行安装器。安装后启动 CE，Lua 桥会自动加载；已有 CE 进程要重新加载启动脚本时，可在 CE 的 Lua Engine 执行 `dofile([[<CE 安装目录>/autorun/ce_mcp.lua]])`，前提是该进程里尚未加载桥。
 
-3. **在本地 MCP 客户端配置 Python 服务。** 例如在 [Codex 的 MCP 配置](https://developers.openai.com/learn/docs-mcp)中加入下面的 TOML，把示例路径全部换成仓库的实际绝对路径（TOML 单引号保留 Windows 反斜杠）：
+   **不改客户端配置也能验证：** 保持 CE 运行，在仓库根目录的 PowerShell 中执行下面的命令。它用项目虚拟环境里的 MCP SDK 启动本地服务、列出工具数并调用 `ce_status`；预期显示 `tools: 33` 和 CE 版本、当前进程。如果只看到管道不可用错误，请检查 CE 是否已启动且加载了桥。
+
+   ```powershell
+   @'
+   import asyncio
+   from pathlib import Path
+   from mcp import ClientSession, StdioServerParameters, stdio_client
+
+   async def main():
+       root = Path.cwd()
+       params = StdioServerParameters(
+           command=str(root / '.venv/Scripts/python.exe'),
+           args=['-B', str(root / 'server/server.py')],
+       )
+       async with stdio_client(params) as streams:
+           async with ClientSession(*streams) as client:
+               await client.initialize()
+               tools = (await client.list_tools()).tools
+               print('tools:', len(tools))
+               result = await client.call_tool('ce_status', {})
+               if result.is_error:
+                   raise RuntimeError(result.content[0].text)
+               print('ce_status:', result.content[0].text)
+
+   asyncio.run(main())
+   '@ | .\.venv\Scripts\python.exe -
+   ```
+
+3. **在本地 MCP 客户端配置 Python 服务。** Codex / ChatGPT 桌面版的用户配置文件在 Windows 上默认是 `$HOME\.codex\config.toml`；若设置了 `CODEX_HOME`，则在 `$env:CODEX_HOME\config.toml`。在该文件中加入下面的 TOML，把示例路径全部换成仓库的实际绝对路径（TOML 单引号保留 Windows 反斜杠）。也可按 [官方 MCP 配置说明](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)在桌面版设置里添加本地 STDIO 服务。
 
    ```toml
    [mcp_servers.cheat_engine]
@@ -37,7 +79,7 @@
    tool_timeout_sec = 180
    ```
 
-   重新连接客户端后调用 `ce_status`，应看到 CE 版本和当前附加的进程。Python 服务可以先启动，CE 未运行时会返回管道不可用错误。
+   保存配置后，在 ChatGPT 桌面版的“设置 → MCP servers”中选择 **Restart**；Codex IDE 扩展选择 **Restart extension**；Codex CLI 则结束当前会话并重新启动。在 CLI 中可用 `codex mcp list` 查看配置，进入会话后用 `/mcp` 查看已连接的服务，再调用 `ce_status`，应看到 CE 版本和当前附加的进程。Python 服务可以先启动，CE 未运行时会返回管道不可用错误。
 
 **ChatGPT 网页版：** 当前仓库只有本地 stdio 服务，不能直接把 Python 文件或 `\\.\pipe\ce_mcp` 填成 ChatGPT 的 Server URL。官方的 [自定义 MCP 连接](https://developers.openai.com/api/docs/guides/custom-mcp-server)使用远程 SSE/streaming HTTP URL，或者具备相应权限的 [Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)。仓库尚未实现这两种部署方式，也不是已发布的 ChatGPT 插件。
 
